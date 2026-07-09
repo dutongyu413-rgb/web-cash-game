@@ -1,0 +1,11 @@
+.DS_Store
+node_modules/
+npm-debug.log*
+*.log
+
+# Keep source markdown docs public; keep original PDFs local unless explicitly needed.
+*.pdf
+
+# Local publishing and future-design notes; keep them out of the public test repo.
+GitHub-Pages长期链接发布指南.md
+INVESTMENT_NET_VALUE_V2.md
