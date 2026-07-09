@@ -1,6 +1,8 @@
 const STORAGE_KEY = "cashflowLifeMapGame";
 const app = document.getElementById("app");
 const toast = document.getElementById("toast");
+const TRACKING_PROJECT = "cash_game";
+const TRACKING_SCRIPT_SRC = "https://cloud.umami.is/script.js";
 
 let player = null;
 let savedGameAvailable = false;
@@ -8,6 +10,7 @@ let lastDice = null;
 let pendingMonthlySummary = null;
 let selectedMaxMonth = 36;
 let mapMotion = null;
+let pendingTrackingEvents = [];
 
 const challengeLengths = [12, 24, 36];
 
@@ -129,9 +132,54 @@ const mapCells = [
 ];
 
 function init() {
+  initTracking();
   savedGameAvailable = Boolean(loadSavedGame(false));
   player = null;
   renderHome();
+}
+
+function initTracking() {
+  const websiteId = String(window.CASH_GAME_UMAMI_WEBSITE_ID || "").trim();
+  if (!websiteId) return;
+
+  const script = document.createElement("script");
+  script.defer = true;
+  script.src = TRACKING_SCRIPT_SRC;
+  script.dataset.websiteId = websiteId;
+  script.addEventListener("load", flushTrackingEvents);
+  document.head.appendChild(script);
+}
+
+function flushTrackingEvents() {
+  const events = pendingTrackingEvents;
+  pendingTrackingEvents = [];
+  events.forEach(({ name, data }) => trackEvent(name, data));
+}
+
+function trackEvent(name, data = {}) {
+  // Umami 自定义事件：统一加项目标识，便于和其他 GitHub Pages 项目区分。
+  const payload = {
+    project: TRACKING_PROJECT,
+    ...data,
+  };
+
+  if (typeof window.umami?.track === "function") {
+    window.umami.track(name, payload);
+    return;
+  }
+
+  if (window.CASH_GAME_UMAMI_WEBSITE_ID) {
+    pendingTrackingEvents.push({ name, data: payload });
+  }
+}
+
+function bufferBand(buffer) {
+  // 只记录安全垫区间，不上传具体收入、支出、储蓄或安全垫数值。
+  if (buffer < 0) return "negative";
+  if (buffer < 1) return "under_1_month";
+  if (buffer < 3) return "1_to_3_months";
+  if (buffer < 6) return "3_to_6_months";
+  return "over_6_months";
 }
 
 function renderHome() {
@@ -429,6 +477,11 @@ function renderGamePage(message = "点击掷骰子，在人生地图上前进。
 function rollDice() {
   if (!player || player.gameEnded) return;
   lastDice = randomInt(1, 3);
+  trackEvent("cash_game_dice_rolled", {
+    // 记录：玩家掷骰前进，用于判断玩家是否真正进入游玩循环。
+    month: player.currentMonth,
+    challenge_length: player.maxMonth,
+  });
   mapMotion = {
     driftX: -lastDice * 34,
     driftY: lastDice * 18,
@@ -521,6 +574,14 @@ function confirmEvent(eventId, choiceIndex = null) {
   pendingMonthlySummary = buildMonthlySummary(event, choice, before, afterEffect);
   addToHistory(event, choice, afterEffect);
   recordEventDraw(event.id);
+  trackEvent("cash_game_card_resolved", {
+    // 记录：玩家处理了一张事件卡，用于分析哪些卡牌和选择被触发。
+    event_id: event.id,
+    event_category: event.category,
+    has_choice: Boolean(choice),
+    choice_index: choice ? Number(choiceIndex) : null,
+    month: player.currentMonth,
+  });
   closeModal();
   renderGamePage(`「${event.title}」已经生效，本月结算如下。`, { skipEcho: true });
   showMonthlySummary();
@@ -536,8 +597,14 @@ function showMonthlySummary() {
     summary.tempExpenseDelta ? ["临时支出影响", formatSignedMoney(summary.tempExpenseDelta), ""] : null,
     summary.protectionReduction ? ["保障减少损失", `+${formatMoney(summary.protectionReduction)}`, "good"] : null,
     summary.reserveDelta ? ["一次性储备变动", formatSignedMoney(summary.reserveDelta), ""] : null,
-    ["安全垫变化", formatSignedBuffer(summary.bufferDelta), settlementClass === "is-up" ? "good" : "warn"],
   ].filter(Boolean);
+  const detailRowsHtml = detailRows.length
+    ? `
+      <div class="settlement-details">
+        ${detailRows.map(([label, value, className]) => `<div class="detail-row ${className}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}
+      </div>
+    `
+    : "";
   openModal(`
     <div class="settlement-card ${settlementClass}">
       <div class="settlement-verdict ${verdict.className}">
@@ -583,9 +650,7 @@ function showMonthlySummary() {
           `
           : ""
       }
-      <div class="settlement-details">
-        ${detailRows.map(([label, value, className]) => `<div class="detail-row ${className}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}
-      </div>
+      ${detailRowsHtml}
     </div>
     <div class="insight">
       <strong>本月分析</strong>
@@ -601,6 +666,11 @@ function showMonthlySummary() {
 
 function endGameNow() {
   if (!player) return;
+  trackEvent("cash_game_report_requested", {
+    // 记录：玩家主动查看报告，用于判断是否有人提前结束并查看结果。
+    month: player.currentMonth,
+    challenge_length: player.maxMonth,
+  });
   player.gameEnded = true;
   player.endReason = "manual";
   player.endedMonth = player.currentMonth;
@@ -611,6 +681,7 @@ function endGameNow() {
 
 function endMonth() {
   if (!pendingMonthlySummary) return;
+  const settledSummary = pendingMonthlySummary;
   player.savings = pendingMonthlySummary.savingsAfterMonth;
   processLongTermPlans();
   const recoveryMessages = processActiveEffects();
@@ -623,6 +694,13 @@ function endMonth() {
   player.tempExpensePercent = 0;
   player.tempProtectionReduction = 0;
   pendingMonthlySummary = null;
+  trackEvent("cash_game_month_settled", {
+    // 记录：玩家完成一次月度结算，用于观察实际推进到第几个月。
+    month: player.currentMonth,
+    challenge_length: player.maxMonth,
+    round_label: settledSummary.roundLabel,
+    buffer_band_after: bufferBand(settledSummary.bufferAfterMonth),
+  });
 
   if (player.savings < 0 || player.currentMonth >= player.maxMonth) {
     player.gameEnded = true;
@@ -642,6 +720,11 @@ function endMonth() {
 }
 
 function renderHistory() {
+  trackEvent("cash_game_history_opened", {
+    // 记录：玩家打开人生日志，用于判断历史回放是否有人使用。
+    month: player.currentMonth,
+    challenge_length: player.maxMonth,
+  });
   const rows = player.history.length
     ? player.history
         .map(
@@ -681,6 +764,18 @@ function renderResultPage() {
   const protectionResult = getProtectionResult();
   const dcaResult = getDcaResult();
   const careerResult = getCareerCourseResult();
+  trackEvent(player.endReason === "cash_broken" ? "cash_game_failed" : "cash_game_completed", {
+    // 记录：一局游戏结束。只上传结果类型和安全垫区间，不上传具体分数或金额。
+    end_reason: player.endReason || "completed",
+    ended_month: player.endedMonth || player.currentMonth,
+    challenge_length: player.maxMonth,
+    result_type: result.type,
+    grade: grade.grade,
+    final_buffer_band: bufferBand(finalBuffer),
+    lowest_buffer_band: bufferBand(player.lowestBuffer),
+    had_protection: Boolean(getAnyProtectionPlan()),
+    had_dca: Boolean(getDcaPlan()),
+  });
   clearSavedGame();
   savedGameAvailable = false;
   app.innerHTML = `
@@ -1011,6 +1106,7 @@ function handleDcaMarketChoice(choice, stage) {
   if (!plan) return;
 
   const state = getDcaMarketState(stage || plan.pendingMarketStage, plan);
+  const holdingBefore = getDcaHoldingPrincipal(plan);
 
   if (choice === "sell_half") {
     sellDcaHolding(plan, 0.5, state.returnRate);
@@ -1034,6 +1130,21 @@ function handleDcaMarketChoice(choice, stage) {
   }
 
   plan.pendingMarketStage = null;
+  trackEvent("cash_game_investment_choice_made", {
+    // 记录：玩家在估值修复或阶段高估时做出的投资选择。
+    market_stage: state.stage,
+    choice_type: choice,
+    month: player.currentMonth,
+  });
+  if (choice === "sell_half" || choice === "sell_all") {
+    trackEvent("cash_game_investment_sold", {
+      // 记录：玩家发生卖出行为，只记录卖出类型，不上传卖出金额。
+      market_stage: state.stage,
+      sell_type: choice,
+      sold_all: getDcaHoldingPrincipal(plan) <= 0,
+      holding_before_band: holdingBefore > 0 ? "has_holding" : "no_holding",
+    });
+  }
   saveGame();
   closeModal();
   renderGamePage("投资状态已更新。");
@@ -1074,6 +1185,13 @@ function startGame(identity, maxMonth = selectedMaxMonth) {
   pendingMonthlySummary = null;
   saveGame();
   savedGameAvailable = true;
+  trackEvent("cash_game_started", {
+    // 记录：玩家正式开始一局游戏，用于计算从访问到开局的转化。
+    identity_id: identity.id || "custom",
+    identity_type: identity.id === "custom" ? "custom" : "preset",
+    challenge_length: normalizedMaxMonth,
+    initial_buffer_band: bufferBand(initialBuffer),
+  });
   renderGamePage();
 }
 
@@ -1193,6 +1311,11 @@ function applyEffect(effect, event = null) {
       remainingMonths: 999,
       sourcePlanId: "index_dca_001",
     });
+    trackEvent("cash_game_dca_started", {
+      // 记录：玩家开启定投计划，用于观察投资相关玩法是否被使用。
+      month: player.currentMonth,
+      challenge_length: player.maxMonth,
+    });
     return;
   }
 
@@ -1222,6 +1345,11 @@ function applyEffect(effect, event = null) {
       remainingMonths: effect.duration,
       sourcePlanId: "basic_protection_001",
       sourceEventId: event?.id || null,
+    });
+    trackEvent("cash_game_protection_started", {
+      // 记录：玩家配置基础保障，用于观察保障玩法是否被使用。
+      month: player.currentMonth,
+      challenge_length: player.maxMonth,
     });
     return;
   }
@@ -2443,16 +2571,32 @@ document.addEventListener("click", (event) => {
     renderHome();
   }
 
-  if (action === "random") renderRandomIdentity();
+  if (action === "random") {
+    trackEvent("cash_game_identity_rerolled", {
+      // 记录：玩家重新抽身份，用于观察身份卡是否让用户反复重抽。
+      from_screen: player ? "game_or_result" : "home",
+    });
+    renderRandomIdentity();
+  }
 
   if (action === "set-length") {
     selectedMaxMonth = Number(target.dataset.months) || selectedMaxMonth;
+    trackEvent("cash_game_challenge_length_selected", {
+      // 记录：玩家选择挑战长度，用于判断 12/24/36 个月哪个更常用。
+      challenge_length: selectedMaxMonth,
+    });
     const currentIdentityId = document.querySelector("[data-action='start-random']")?.dataset.id;
     const identity = identityCards.find((item) => item.id === currentIdentityId);
     if (identity) renderRandomIdentity(identity);
   }
 
-  if (action === "custom") renderCustomIdentity();
+  if (action === "custom") {
+    trackEvent("cash_game_custom_identity_opened", {
+      // 记录：玩家打开自定义身份表单，用于判断是否有人想输入自己的情况。
+      from_screen: "home",
+    });
+    renderCustomIdentity();
+  }
 
   if (action === "start-random") {
     const identity = identityCards.find((item) => item.id === target.dataset.id);
@@ -2462,6 +2606,11 @@ document.addEventListener("click", (event) => {
   if (action === "continue") {
     if (loadSavedGame(true)) {
       lastDice = null;
+      trackEvent("cash_game_resumed", {
+        // 记录：玩家继续上次游戏，用于观察存档入口是否有用。
+        month: player.currentMonth,
+        challenge_length: player.maxMonth,
+      });
       renderGamePage("已继续上次游戏。");
     } else {
       savedGameAvailable = false;
@@ -2470,6 +2619,11 @@ document.addEventListener("click", (event) => {
   }
 
   if (action === "restart") {
+    trackEvent("cash_game_restarted", {
+      // 记录：玩家重新开始，用于观察中途放弃或结果页重玩的情况。
+      from_month: player?.currentMonth || null,
+      had_active_game: Boolean(player && !player.gameEnded),
+    });
     clearSavedGame();
     savedGameAvailable = false;
     player = null;

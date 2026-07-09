@@ -111,6 +111,83 @@ package.json        本地运行脚本
 - `estimateStress`
 - 如果影响结算展示，也要看 `buildMonthlySummary` 和 `showMonthlySummary`
 
+## Umami 访问和行为追踪
+
+当前项目已预留 Umami 统计接入，用于长期链接发布后观察访问量和关键行为。
+
+### 如何启用
+
+在 [index.html](./index.html) 中找到：
+
+```html
+window.CASH_GAME_UMAMI_WEBSITE_ID = "";
+```
+
+把空字符串替换为 Umami 后台提供的 `data-website-id`：
+
+```html
+window.CASH_GAME_UMAMI_WEBSITE_ID = "你的 Umami Website ID";
+```
+
+留空时不会加载 Umami，也不会发送任何统计数据。
+
+### 项目区分方式
+
+如果多个 GitHub Pages 项目共用同一个域名，例如：
+
+```text
+dutongyu413-rgb.github.io
+```
+
+本项目会给所有自定义事件自动加上：
+
+```js
+project: "cash_game"
+```
+
+同时事件名统一使用 `cash_game_` 前缀，便于和其他项目区分。
+
+### 当前记录的关键事件
+
+| 事件名 | 含义 |
+|---|---|
+| `cash_game_started` | 玩家正式开始一局游戏 |
+| `cash_game_identity_rerolled` | 玩家重新抽身份 |
+| `cash_game_challenge_length_selected` | 玩家选择挑战长度 |
+| `cash_game_custom_identity_opened` | 玩家打开自定义身份表单 |
+| `cash_game_resumed` | 玩家继续上次游戏 |
+| `cash_game_restarted` | 玩家重新开始 |
+| `cash_game_dice_rolled` | 玩家掷骰进入回合 |
+| `cash_game_card_resolved` | 玩家处理了一张事件卡 |
+| `cash_game_month_settled` | 玩家完成本月结算 |
+| `cash_game_history_opened` | 玩家打开人生日志 |
+| `cash_game_report_requested` | 玩家主动查看报告 |
+| `cash_game_protection_started` | 玩家配置基础保障 |
+| `cash_game_dca_started` | 玩家开启定投计划 |
+| `cash_game_investment_choice_made` | 玩家在投资后续事件中做出选择 |
+| `cash_game_investment_sold` | 玩家卖出一半或全部投资持仓 |
+| `cash_game_completed` | 玩家完成挑战或主动结束后进入结果页 |
+| `cash_game_failed` | 现金储备被击穿后进入结果页 |
+
+### 隐私边界
+
+统计事件不会上传这些具体数据：
+
+- 月收入
+- 月支出
+- 现金储备
+- 安全垫具体数值
+- 具体生存分数
+- 自定义身份中输入的金额
+
+会上传的是非敏感分档和行为信息，例如：
+
+- 项目标识：`cash_game`
+- 挑战长度：12、24 或 36
+- 事件类型：健康、收入、选择等
+- 是否发生卖出
+- 安全垫区间，例如 `1_to_3_months`
+
 ## 当前定投和卖出逻辑
 
 当前版本暂时没有完整的基金净值线，但已经在原有定投机制上补了一条轻量后续线。
