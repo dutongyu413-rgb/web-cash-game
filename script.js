@@ -530,10 +530,10 @@ function showEventCard(event) {
                 ${event.choices
                   .map(
                     (choice, index) => `
-                      <button class="choice-button" data-action="choose-event" data-event-id="${event.id}" data-choice-index="${index}">
-                        <strong>${escapeHtml(choice.label)}</strong>
-                        <span>${escapeHtml(choice.resultText)}</span>
-                        <em>${escapeHtml(choiceEffectLine(choice.effect))}</em>
+                      <button class="choice-button ${choiceEffectTone(choice.effect)}" data-action="choose-event" data-event-id="${event.id}" data-choice-index="${index}">
+                        <strong class="choice-title">${escapeHtml(choice.label)}</strong>
+                        <span class="choice-impact">${escapeHtml(choiceEffectLine(choice.effect))}</span>
+                        <span class="choice-note">${escapeHtml(choice.resultText)}</span>
                       </button>
                     `,
                   )
@@ -569,7 +569,6 @@ function confirmEvent(eventId, choiceIndex = null) {
   const before = captureMonthState();
 
   applyEffect(effect, event);
-  updateBiggestStressEvent(event, effect);
   const afterEffect = captureMonthState();
   pendingMonthlySummary = buildMonthlySummary(event, choice, before, afterEffect);
   addToHistory(event, choice, afterEffect);
@@ -682,6 +681,7 @@ function endGameNow() {
 function endMonth() {
   if (!pendingMonthlySummary) return;
   const settledSummary = pendingMonthlySummary;
+  recordActualMonthStress(settledSummary);
   player.savings = pendingMonthlySummary.savingsAfterMonth;
   processLongTermPlans();
   const recoveryMessages = processActiveEffects();
@@ -799,7 +799,7 @@ function renderResultPage() {
             <strong>${escapeHtml(biggestStressTitle)}</strong>
           </div>
           <div class="stress-amount">
-            <span>估算压力</span>
+            <span>累计冲击</span>
             <strong>${formatMoney(biggestStressAmount)}</strong>
           </div>
         </div>
@@ -887,7 +887,12 @@ function getResultCurvePoints(buffers) {
 
 function getBiggestStressExplanation(title, stressAmount) {
   if (!title || title === "暂无") return "这一局没有出现明显的单次压力事件。";
-  return "这是本局对现金流冲击最集中的一次，按收入减少、支出增加和现金储备消耗综合估算。";
+  const count = player?.stressCounts?.[title] || 1;
+  const unit = player?.stressUnits?.[title] || "次";
+  if (count > 1) {
+    return `这个事件在本局实际影响了 ${count} ${unit}，累计造成 ${formatMoney(stressAmount)} 的现金流冲击。`;
+  }
+  return `这个事件在本局实际造成 ${formatMoney(stressAmount)} 的现金流冲击。`;
 }
 
 function getProtectionResult() {
@@ -1166,6 +1171,9 @@ function startGame(identity, maxMonth = selectedMaxMonth) {
     lowestSavings: Number(identity.savings) || 0,
     lowestBuffer: initialBuffer,
     biggestStressEvent: null,
+    stressLedger: {},
+    stressCounts: {},
+    stressUnits: {},
     tempIncomeChange: 0,
     tempIncomePercent: 0,
     tempExpenseChange: 0,
@@ -1205,6 +1213,17 @@ function applyEffect(effect, event = null) {
 
   if (effect.type === "change_savings_by_income_percent") {
     player.savings += Math.round(player.baseIncome * effect.amount);
+    return;
+  }
+
+  if (effect.type === "bonus_invest_or_reserve") {
+    const bonusAmount = Math.round(player.baseIncome);
+    applyInvestOrReserve(bonusAmount, effect.investPercent || 0.5);
+    return;
+  }
+
+  if (effect.type === "invest_or_reserve") {
+    applyInvestOrReserve(effect.amount || 0, effect.investPercent || 0.5);
     return;
   }
 
@@ -1273,6 +1292,19 @@ function applyEffect(effect, event = null) {
         duration: effect.duration,
         sourceEventId: effect.id || event?.id || null,
       },
+    });
+    return;
+  }
+
+  if (effect.type === "schedule_savings_effect") {
+    player.scheduledCards.push({
+      id: effect.id || generateId("scheduled_savings"),
+      type: "savings_effect",
+      title: effect.title || event?.title || "后续事件",
+      message: effect.message || "之前的选择产生了后续影响。",
+      triggerMonth: Math.min(player.maxMonth, player.currentMonth + (effect.triggerDelay || 1)),
+      triggered: false,
+      amount: effect.amount,
     });
     return;
   }
@@ -1368,10 +1400,13 @@ function applyEffect(effect, event = null) {
     player.savings -= 50000;
     player.activeEffects.push({
       id: "car_loan",
+      name: "换车月供",
       target: "expense",
       amount: 2500,
       remainingMonths: 36,
+      sourceEventId: event?.id || "buy_car_choice",
     });
+    scheduleCarFollowUps();
     return;
   }
 
@@ -1556,6 +1591,17 @@ function resolveScheduledCard(card) {
     };
   }
 
+  if (card.type === "savings_effect") {
+    player.savings += card.amount;
+    recordStress(card.title || "后续事件", Math.max(0, -(card.amount || 0)), "次");
+
+    return {
+      title: card.title,
+      message: card.message,
+      effectLine: `现金储备 ${formatSignedMoney(card.amount)}。`,
+    };
+  }
+
   if (card.id !== "career_course_echo") return null;
   const success = Math.random() < 0.7;
 
@@ -1605,6 +1651,50 @@ function renderScheduledEchoCard(echo) {
   `);
 }
 
+function scheduleCarFollowUps() {
+  player.scheduledCards.push({
+    id: generateId("car_maintenance"),
+    type: "savings_effect",
+    title: "第一次保养",
+    message: "换车后的第一次保养到了。",
+    triggerMonth: Math.min(player.maxMonth, player.currentMonth + randomInt(3, 5)),
+    triggered: false,
+    amount: -1200,
+  });
+
+  player.scheduledCards.push({
+    id: generateId("car_parking_fee"),
+    type: "active_effect",
+    title: "停车费上涨",
+    message: "新的通勤路线增加了停车支出。",
+    triggerMonth: Math.min(player.maxMonth, player.currentMonth + randomInt(2, 4)),
+    triggered: false,
+    activeEffect: {
+      name: "停车费上涨",
+      target: "expense",
+      amount: 500,
+      duration: 6,
+      sourceEventId: "car_parking_fee",
+    },
+  });
+
+  player.scheduledCards.push({
+    id: generateId("car_commute_efficiency"),
+    type: "active_effect",
+    title: "通勤效率提升",
+    message: "通勤更稳定后，你接下了一些更顺手的工作安排。",
+    triggerMonth: Math.min(player.maxMonth, player.currentMonth + randomInt(3, 6)),
+    triggered: false,
+    activeEffect: {
+      name: "通勤效率提升",
+      target: "income",
+      amount: 800,
+      duration: 6,
+      sourceEventId: "car_commute_efficiency",
+    },
+  });
+}
+
 function maybeTriggerDcaMarketEvent() {
   const plan = getDcaPlan();
   if (!plan || ["redeemed", "sold_all"].includes(plan.status)) return;
@@ -1642,38 +1732,46 @@ function updateLowestSavingsAndBuffer() {
   player.lowestBuffer = Math.min(player.lowestBuffer, buffer);
 }
 
-function updateBiggestStressEvent(event, effect) {
-  const stress = estimateStress(effect);
-  if (!player.biggestStressEvent || stress > player.biggestStressEvent.stress) {
-    player.biggestStressEvent = {
-      title: event.title,
-      stress,
-    };
-  }
+function recordActualMonthStress(summary) {
+  if (!summary) return;
+  const eventStress =
+    Math.max(0, -(summary.reserveDelta || 0)) +
+    Math.max(0, -(summary.tempIncomeDelta || 0)) +
+    Math.max(0, summary.tempExpenseDelta || 0);
+  recordStress(summary.eventTitle, eventStress, "次");
+
+  player.activeEffects.forEach((effect) => {
+    if (effect.sourcePlanId) return;
+    recordStress(effect.name || "持续影响", getActiveEffectMonthlyStress(effect), "个月");
+  });
 }
 
-function estimateStress(effect) {
-  if (!effect || effect.type === "none") return 0;
-  if (effect.type === "change_savings") return Math.max(0, -effect.amount);
-  if (effect.type === "change_savings_by_income_percent") return effect.amount < 0 ? Math.max(0, -player.baseIncome * effect.amount) : 0;
-  if (effect.type === "one_month_income_change") return Math.max(0, -effect.amount);
-  if (effect.type === "one_month_income_percent") return Math.max(0, -player.baseIncome * effect.amount);
-  if (effect.type === "one_month_expense_change") return Math.max(0, effect.amount);
-  if (effect.type === "one_month_expense_percent") return Math.max(0, player.baseExpense * effect.amount);
-  if (effect.type === "add_active_effect") {
-    if (effect.target === "income_percent") return Math.max(0, -player.baseIncome * effect.amount * effect.duration);
-    if (effect.target === "expense_percent") return Math.max(0, player.baseExpense * effect.amount * Math.min(effect.duration, player.maxMonth));
-    if (effect.target === "expense") return Math.max(0, effect.amount * Math.min(effect.duration, player.maxMonth));
-  }
-  if (effect.type === "add_uncertain_active_effect") {
-    return Math.max(0, -player.baseIncome * effect.amount * Math.min(effect.maxMonths || 12, player.maxMonth));
-  }
-  if (effect.type === "start_dca_plan") return effect.monthlyAmount * Math.max(1, player.maxMonth - player.currentMonth + 1);
-  if (effect.type === "start_protection_plan") return effect.monthlyAmount * effect.duration;
-  if (effect.type === "career_course_plan") return effect.cost;
-  if (effect.type === "buy_car") return 50000 + 2500 * 12;
-  if (effect.type === "compound") return effect.effects.reduce((sum, item) => sum + estimateStress(item), 0);
+function getActiveEffectMonthlyStress(effect) {
+  if (!effect) return 0;
+  if (effect.target === "income") return Math.max(0, -(effect.amount || 0));
+  if (effect.target === "income_percent") return Math.max(0, -player.baseIncome * (effect.amount || 0));
+  if (effect.target === "expense") return Math.max(0, effect.amount || 0);
+  if (effect.target === "expense_percent") return Math.max(0, player.baseExpense * (effect.amount || 0));
   return 0;
+}
+
+function recordStress(title, amount, unit = "次") {
+  const stress = Math.max(0, Math.round(amount || 0));
+  if (!stress) return;
+  const stressTitle = title || "未命名事件";
+  if (!player.stressLedger) player.stressLedger = {};
+  if (!player.stressCounts) player.stressCounts = {};
+  if (!player.stressUnits) player.stressUnits = {};
+  player.stressLedger[stressTitle] = (player.stressLedger[stressTitle] || 0) + stress;
+  player.stressCounts[stressTitle] = (player.stressCounts[stressTitle] || 0) + 1;
+  player.stressUnits[stressTitle] = unit;
+
+  if (!player.biggestStressEvent || player.stressLedger[stressTitle] > player.biggestStressEvent.stress) {
+    player.biggestStressEvent = {
+      title: stressTitle,
+      stress: player.stressLedger[stressTitle],
+    };
+  }
 }
 
 function addToHistory(event, choice, afterEffect) {
@@ -1770,7 +1868,9 @@ function getEventMaxCount(event) {
     "rent_or_commute_choice",
     "childcare_cost",
     "rent_up",
+    "sell_unused",
     "subscription_cleanup",
+    "deposit_return",
   ]);
 
   if (onceIds.has(event.id)) return 1;
@@ -2317,13 +2417,19 @@ function formatEffectMonthlyAmount(effect) {
 function getPendingScheduledStatuses() {
   if (!player) return [];
   return (player.scheduledCards || [])
-    .filter((card) => !card.triggered && (card.type === "active_effect" || card.id === "career_course_echo"))
+    .filter((card) => !card.triggered && card.showPendingStatus)
     .map((card) => {
       const remaining = Math.max(1, card.triggerMonth - player.currentMonth);
       if (card.id === "career_course_echo") {
         return {
           title: "职业提升课程",
           meta: `${remaining} 个月后可能出现收入提升机会`,
+        };
+      }
+      if (card.type === "savings_effect") {
+        return {
+          title: card.title || "后续事件",
+          meta: `${remaining} 个月后生效 · 现金储备 ${formatSignedMoney(card.amount || 0)}`,
         };
       }
       const target = card.activeEffect?.target === "expense" ? "常规月支出" : "常规月收入";
@@ -2380,6 +2486,7 @@ function getProtectionPreview(event, effect) {
 function getSavingsLossFromEffect(effect) {
   if (!effect) return 0;
   if (effect.type === "change_savings") return Math.max(0, -effect.amount);
+  if (effect.type === "schedule_savings_effect") return Math.max(0, -effect.amount);
   if (effect.type === "compound") return effect.effects.reduce((sum, item) => sum + getSavingsLossFromEffect(item), 0);
   return 0;
 }
@@ -2426,6 +2533,11 @@ function effectText(effect) {
     const target = effect.target === "expense" ? "常规月支出" : "常规月收入";
     return `${effect.triggerDelay || 1} 个月后，${target} ${formatSignedMoney(effect.amount)}${durationSuffix(effect.duration)}`;
   }
+  if (effect.type === "schedule_savings_effect") {
+    return `${effect.triggerDelay || 1} 个月后，现金储备 ${formatSignedMoney(effect.amount)}`;
+  }
+  if (effect.type === "bonus_invest_or_reserve") return bonusInvestOrReserveText(effect);
+  if (effect.type === "invest_or_reserve") return investOrReserveText(effect.amount || 0, effect.investPercent || 0.5);
   if (effect.type === "start_dca_plan") return `每月定投支出 +${effect.monthlyAmount} 元`;
   if (effect.type === "start_protection_plan") return `常规月支出 +${effect.monthlyAmount} 元，持续 ${effect.duration} 个月；部分健康风险可减少储备损失`;
   if (effect.type === "career_course_plan") return `现金储备 -${effect.cost} 元`;
@@ -2439,8 +2551,110 @@ function durationSuffix(duration) {
 }
 
 function choiceEffectLine(effect) {
-  const text = effectText(effect);
-  return text === "无数值变化" ? "现金流影响：不改变收入、支出或储备" : `现金流影响：${text}`;
+  const text = choiceEffectText(effect);
+  return text || "现金流不变";
+}
+
+function choiceEffectText(effect) {
+  if (!effect || effect.type === "none") return "现金流不变";
+  if (effect.type === "change_savings") return `现金储备 ${formatSignedMoney(effect.amount)}`;
+  if (effect.type === "change_savings_by_income_percent") return `现金储备 ${formatSignedMoney(player.baseIncome * effect.amount)}`;
+  if (effect.type === "one_month_income_change") return `本月收入 ${formatSignedMoney(effect.amount)}`;
+  if (effect.type === "one_month_income_percent") return `本月收入 ${formatPercent(effect.amount)}`;
+  if (effect.type === "one_month_expense_change") return `本月支出 ${formatSignedMoney(effect.amount)}`;
+  if (effect.type === "one_month_expense_percent") return `本月支出 ${formatPercent(effect.amount)}`;
+  if (effect.type === "add_active_effect") {
+    if (effect.target === "income_percent") return `月收入 ${formatPercent(effect.amount)}${durationSuffix(effect.duration)}`;
+    if (effect.target === "expense_percent") return `月支出 ${formatPercent(effect.amount)}${durationSuffix(effect.duration)}`;
+    const target = effect.target === "expense" ? "月支出" : "月收入";
+    return `${target} ${formatSignedMoney(effect.amount)}${durationSuffix(effect.duration)}`;
+  }
+  if (effect.type === "add_uncertain_active_effect") {
+    if (effect.target === "income_percent") return `月收入 ${formatPercent(effect.amount)}，恢复时间未知`;
+    return "一项持续影响，结束时间未知";
+  }
+  if (effect.type === "schedule_active_effect") {
+    const target = effect.target === "expense" ? "月支出" : "月收入";
+    return `${effect.triggerDelay || 1} 个月后，${target} ${formatSignedMoney(effect.amount)}${durationSuffix(effect.duration)}`;
+  }
+  if (effect.type === "schedule_savings_effect") return "";
+  if (effect.type === "bonus_invest_or_reserve") return bonusInvestOrReserveText(effect);
+  if (effect.type === "invest_or_reserve") return investOrReserveText(effect.amount || 0, effect.investPercent || 0.5);
+  if (effect.type === "start_dca_plan") return `月支出 +${currencyFormatter.format(effect.monthlyAmount)} 元`;
+  if (effect.type === "start_protection_plan") return `月支出 +${currencyFormatter.format(effect.monthlyAmount)} 元，持续 ${effect.duration} 个月`;
+  if (effect.type === "career_course_plan") return `现金储备 -${currencyFormatter.format(effect.cost)} 元`;
+  if (effect.type === "buy_car") return "现金储备 -50,000 元；月支出 +2,500 元";
+  if (effect.type === "compound") {
+    const visibleEffects = effect.effects.map(choiceEffectText).filter(Boolean);
+    return visibleEffects.length ? visibleEffects.join("；") : "现金流不变";
+  }
+  return effectText(effect);
+}
+
+function choiceEffectTone(effect) {
+  if (effect?.type === "compound") {
+    const scores = effect.effects.map(getChoiceEffectScore);
+    const hasPositive = scores.some((score) => score > 0);
+    const hasNegative = scores.some((score) => score < 0);
+    if (hasPositive && hasNegative) return "choice-mixed";
+  }
+  const score = getChoiceEffectScore(effect);
+  if (score > 0) return "choice-positive";
+  if (score < 0) return "choice-negative";
+  return "choice-neutral";
+}
+
+function getChoiceEffectScore(effect) {
+  if (!effect || effect.type === "none") return 0;
+  if (effect.type === "change_savings") return Math.sign(effect.amount || 0);
+  if (effect.type === "change_savings_by_income_percent") return Math.sign(effect.amount || 0);
+  if (effect.type === "one_month_income_change" || effect.type === "one_month_income_percent") return Math.sign(effect.amount || 0);
+  if (effect.type === "one_month_expense_change" || effect.type === "one_month_expense_percent") return -Math.sign(effect.amount || 0);
+  if (effect.type === "add_active_effect" || effect.type === "schedule_active_effect") {
+    if (effect.target === "expense" || effect.target === "expense_percent") return -Math.sign(effect.amount || 0);
+    return Math.sign(effect.amount || 0);
+  }
+  if (effect.type === "add_uncertain_active_effect") return Math.sign(effect.amount || 0);
+  if (effect.type === "schedule_savings_effect") return 0;
+  if (effect.type === "bonus_invest_or_reserve") return 1;
+  if (effect.type === "invest_or_reserve") return 1;
+  if (effect.type === "start_dca_plan" || effect.type === "start_protection_plan" || effect.type === "career_course_plan" || effect.type === "buy_car") return -1;
+  if (effect.type === "compound") {
+    return effect.effects.reduce((sum, item) => sum + getChoiceEffectScore(item), 0);
+  }
+  return 0;
+}
+
+function bonusInvestOrReserveText(effect) {
+  const bonusAmount = Math.round(player.baseIncome);
+  return investOrReserveText(bonusAmount, effect.investPercent || 0.5);
+}
+
+function investOrReserveText(amount, investPercent = 0.5) {
+  const plan = getDcaPlan();
+  if (plan && plan.status === "active") {
+    const investAmount = Math.round(amount * investPercent);
+    const reserveAmount = amount - investAmount;
+    return `定投加码 ${formatMoney(investAmount)}；现金储备 +${currencyFormatter.format(reserveAmount)} 元`;
+  }
+  return `现金储备 +${currencyFormatter.format(amount)} 元`;
+}
+
+function applyInvestOrReserve(amount, investPercent = 0.5) {
+  const totalAmount = Math.round(amount || 0);
+  const plan = getDcaPlan();
+  const canInvest = plan && plan.status === "active";
+
+  if (!canInvest) {
+    player.savings += totalAmount;
+    return;
+  }
+
+  const investAmount = Math.round(totalAmount * investPercent);
+  const reserveAmount = totalAmount - investAmount;
+  plan.totalInvested = (plan.totalInvested || 0) + investAmount;
+  plan.holdingPrincipal = getDcaHoldingPrincipal(plan) + investAmount;
+  player.savings += reserveAmount;
 }
 
 function planStatusText(status) {

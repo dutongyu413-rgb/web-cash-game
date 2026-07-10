@@ -10,7 +10,7 @@ var eventCards = [
     category: "expense_up",
     description: "孩子新增课外班，每月支出增加 2000 元，持续 6 个月。",
     effect: { type: "add_active_effect", target: "expense", amount: 2000, duration: 6 },
-    insight: "这类支出最容易悄悄变成新常态。它不吓人，但会每个月来敲一次门。",
+    insight: "这笔支出会持续几个月。",
   },
   {
     id: "rent_up",
@@ -18,7 +18,7 @@ var eventCards = [
     category: "expense_up",
     description: "房租续约上涨，常规月支出增加约 8%，持续 12 个月。",
     effect: { type: "add_active_effect", target: "expense_percent", amount: 0.08, duration: 12 },
-    insight: "房租不是一次痛，是每个月的小小重力。安全垫厚不厚，很快会有感觉。",
+    insight: "房租上涨会持续影响月支出。",
   },
   {
     id: "parents_support",
@@ -26,7 +26,7 @@ var eventCards = [
     category: "expense_up",
     description: "家里老人需要更多生活支持，常规月支出增加约 8%，持续 6 个月。",
     effect: { type: "add_active_effect", target: "expense_percent", amount: 0.08, duration: 6 },
-    insight: "家庭责任不是坏事，只是它会把“我的钱”变成“我们家的调度题”。",
+    insight: "家庭支持增加了月支出。",
   },
   {
     id: "childcare_cost",
@@ -34,7 +34,7 @@ var eventCards = [
     category: "expense_up",
     description: "家庭育儿支出增加，常规月支出增加约 10%，持续 12 个月。",
     effect: { type: "add_active_effect", target: "expense_percent", amount: 0.1, duration: 12 },
-    insight: "育儿支出很少只出现一次。它更像地图上的连续地形，走进去以后要多算几步。",
+    insight: "育儿支出进入了接下来一段时间的账单。",
   },
   {
     id: "elder_hospital",
@@ -42,7 +42,7 @@ var eventCards = [
     category: "one_time_cost",
     description: "家里老人突发住院，自付医疗支出 50000 元。",
     effect: { type: "change_savings", amount: -50000 },
-    insight: "这一下不是普通扣血，是直接打到储备条。幸好地图还没结束。",
+    insight: "这笔支出直接消耗现金储备。",
   },
   {
     id: "car_repair",
@@ -50,7 +50,7 @@ var eventCards = [
     category: "one_time_cost",
     description: "车子出现故障，需要更换零件和保养，一次性支出 4500 元。",
     effect: { type: "change_savings", amount: -4500 },
-    insight: "车不会挑你手头宽裕的时候坏。现金储备有时候就是给这种时刻留的。",
+    insight: "维修费从现金储备里支出。",
   },
   {
     id: "moving_cost",
@@ -58,7 +58,7 @@ var eventCards = [
     category: "one_time_cost",
     description: "因为工作或家庭原因搬家，搬运和杂费合计 5000 元。",
     effect: { type: "change_savings", amount: -5000 },
-    insight: "搬家像换地图，但押金和杂费会先来收门票。",
+    insight: "搬家带来一次性支出。",
   },
   {
     id: "home_appliance",
@@ -66,7 +66,7 @@ var eventCards = [
     category: "one_time_cost",
     description: "家里几件大件家电集中更换，一次性支出 10000 元。",
     effect: { type: "change_savings", amount: -10000 },
-    insight: "家电一起罢工的时候，预算表通常会沉默三秒。",
+    insight: "大件家电集中更换。",
   },
   {
     id: "property_fee_up",
@@ -74,7 +74,7 @@ var eventCards = [
     category: "expense_up",
     description: "夏天常开空调，电费明显变高，每月支出增加 500 元，持续 3 个月。",
     effect: { type: "add_active_effect", target: "expense", amount: 500, duration: 3 },
-    insight: "季节性支出不大，但会在某几个月集中冒出来。现金流要留一点呼吸空间。",
+    insight: "这是短期季节性支出。",
   },
   {
     id: "commute_cost_up",
@@ -82,7 +82,7 @@ var eventCards = [
     category: "expense_up",
     description: "工作地点调整后，通勤距离变远，常规月支出增加 400 元。",
     effect: { type: "add_active_effect", target: "expense", amount: 400, duration: 999 },
-    insight: "通勤变远不是一次性事件，它会每天从时间和现金流里扣一点。",
+    insight: "通勤成本变成长期支出。",
   },
   {
     id: "nanny_help",
@@ -90,7 +90,7 @@ var eventCards = [
     category: "expense_up",
     description: "家里需要临时请人帮忙照护，常规月支出增加约 10%，持续 4 个月。",
     effect: { type: "add_active_effect", target: "expense_percent", amount: 0.1, duration: 4 },
-    insight: "有些支出买的是喘息时间，但现金流会先感受到重量。",
+    insight: "照护支出会持续几个月。",
   },
   {
     id: "phone_replacement",
@@ -98,7 +98,7 @@ var eventCards = [
     category: "one_time_cost",
     description: "手机突然报废，工作和生活都离不开，只能立刻更换，一次性支出 5000 元。",
     effect: { type: "change_savings", amount: -5000 },
-    insight: "不是每笔支出都能等打折。有些设备坏了，就会直接从储备里拿钱。",
+    insight: "设备更换消耗现金储备。",
   },
   {
     id: "wedding_gift",
@@ -106,7 +106,7 @@ var eventCards = [
     category: "one_time_cost",
     description: "这个月婚礼、满月和探望集中出现，人情往来一次性支出 3200 元。",
     effect: { type: "change_savings", amount: -3200 },
-    insight: "人情支出很难完全预算，但它确实会占用现金储备。",
+    insight: "人情往来集中到这个月。",
   },
   {
     id: "pipe_leak",
@@ -114,7 +114,66 @@ var eventCards = [
     category: "one_time_cost",
     description: "家中水管或龙头漏水，需要上门维修，一次性支出 800 元。",
     effect: { type: "change_savings", amount: -800 },
-    insight: "生活里的小故障不会毁掉一局，但会提醒你：现金储备也负责处理这些琐碎意外。",
+    insight: "小额维修已经结清。",
+  },
+  {
+    id: "wedding_travel",
+    title: "朋友婚礼出行",
+    category: "one_time_cost",
+    description: "你去外地参加朋友婚礼，交通、住宿和礼金合计支出 2800 元。",
+    effect: { type: "change_savings", amount: -2800 },
+    insight: "这笔人情出行已经结清。",
+  },
+  {
+    id: "pet_clinic",
+    title: "宠物看病",
+    category: "one_time_cost",
+    description: "家里的宠物临时看病，一次性支出 1800 元。",
+    effect: { type: "change_savings", amount: -1800 },
+    insight: "宠物医疗支出已经结清。",
+  },
+  {
+    id: "laptop_repair",
+    title: "电脑维修",
+    category: "one_time_cost",
+    description: "电脑突然故障，需要更换配件和维修，一次性支出 2200 元。",
+    effect: { type: "change_savings", amount: -2200 },
+    insight: "维修费从现金储备里支出。",
+  },
+  {
+    id: "holiday_spending",
+    title: "节日开销",
+    category: "one_time_cost",
+    description: "节日期间聚餐、礼物和交通集中出现，一次性支出 2600 元。",
+    effect: { type: "change_savings", amount: -2600 },
+    insight: "节日开销集中到这个月。",
+  },
+  {
+    id: "relatives_visit",
+    title: "亲戚来住一阵",
+    category: "expense_up",
+    description: "家里亲戚来住一阵，伙食和日用品支出增加，每月支出增加 800 元，持续 2 个月。",
+    effect: { type: "add_active_effect", target: "expense", amount: 800, duration: 2 },
+    insight: "家里临时多了一段支出。",
+  },
+  {
+    id: "gym_renewal_choice",
+    title: "健身年卡续费",
+    category: "choice",
+    description: "健身房年卡到期，你可以续费，也可以先暂停。",
+    choices: [
+      {
+        label: "续一年",
+        resultText: "你支付 2500 元续费年卡。",
+        effect: { type: "change_savings", amount: -2500 },
+      },
+      {
+        label: "先暂停",
+        resultText: "你暂时不续费，本月现金流不变。",
+        effect: { type: "none" },
+      },
+    ],
+    insight: "健身卡已经处理。",
   },
   {
     id: "salary_cut",
@@ -130,7 +189,7 @@ var eventCards = [
       maxMonths: 12,
       recoveryText: "公司业务逐步恢复，你的收入回到原来的水平。",
     },
-    insight: "收入打折时，支出通常不会跟着打折。真正有压力的不是降薪本身，而是不知道它会持续多久。",
+    insight: "收入下降，恢复时间不确定。",
   },
   {
     id: "bonus_cancelled",
@@ -138,7 +197,7 @@ var eventCards = [
     category: "income_down",
     description: "这个月绩效和项目奖金都不理想，工资正常发放，但本月收入减少约 25%。",
     effect: { type: "one_month_income_percent", amount: -0.25 },
-    insight: "底薪还在，浮动奖金没来。把不确定收入当成确定收入时，地图会突然变窄。",
+    insight: "本月浮动收入减少。",
   },
   {
     id: "project_delay",
@@ -146,7 +205,7 @@ var eventCards = [
     category: "income_down",
     description: "项目延期回款，本月收入减少 50%。",
     effect: { type: "one_month_income_percent", amount: -0.5 },
-    insight: "回款晚到不是没有收入，但账单不会一起等。自由度越高，缓冲也要越厚。",
+    insight: "本月回款延迟。",
   },
   {
     id: "temporary_unemployment",
@@ -154,7 +213,7 @@ var eventCards = [
     category: "income_down",
     description: "你暂时失去工作收入，收入归零，持续 2 个月。",
     effect: { type: "add_active_effect", target: "income_percent", amount: -1, duration: 2 },
-    insight: "短期失业是地图上的浓雾区。储备不是赢分道具，是让你慢慢找出口的氧气。",
+    insight: "短期收入中断。",
   },
   {
     id: "commission_slowdown",
@@ -162,7 +221,7 @@ var eventCards = [
     category: "income_down",
     description: "客户付款周期拉长，本月提成少到账，本月收入减少约 25%。",
     effect: { type: "one_month_income_percent", amount: -0.25 },
-    insight: "收入不是没有，只是晚到。现金流最怕的有时候不是少，而是错位。",
+    insight: "本月提成到账减少。",
   },
   {
     id: "unpaid_leave",
@@ -170,7 +229,7 @@ var eventCards = [
     category: "income_down",
     description: "因为家庭安排，你本月请了几天无薪假，收入减少约 18%。",
     effect: { type: "one_month_income_percent", amount: -0.18 },
-    insight: "时间被家庭拿走一部分，收入也会跟着少一块。",
+    insight: "本月收入减少。",
   },
   {
     id: "client_budget_cut",
@@ -186,23 +245,61 @@ var eventCards = [
       maxMonths: 8,
       recoveryText: "客户预算恢复，你的收入回到原来的水平。",
     },
-    insight: "外部预算一收紧，个人现金流也会被牵动。未知期限才是压力来源。",
+    insight: "收入下降，持续时间不确定。",
   },
   {
     id: "year_end_bonus",
     title: "年终奖到账",
-    category: "positive",
-    description: "年终奖到账，现金储备增加约 1 个月收入。",
-    effect: { type: "change_savings_by_income_percent", amount: 1 },
-    insight: "一笔奖金到账，像地图上捡到补给包。怎么用，会影响后面几格的底气。",
+    category: "choice",
+    description: "年终奖到账，金额约等于 1 个月收入。",
+    choices: [
+      {
+        label: "补进现金储备",
+        resultText: "你把年终奖留作现金储备。",
+        effect: { type: "change_savings_by_income_percent", amount: 1 },
+      },
+      {
+        label: "加码定投或先存着",
+        resultText: "如果已有定投计划，就拿一部分奖金加码；如果还没开始定投，就先放进现金储备。",
+        effect: { type: "bonus_invest_or_reserve", investPercent: 0.5 },
+      },
+      {
+        label: "安排一次家庭犒劳",
+        resultText: "你订了一家一直想去的餐厅，再安排一个近郊周末，剩下的钱补进储备。",
+        effect: { type: "change_savings_by_income_percent", amount: 0.65 },
+      },
+    ],
+    insight: "年终奖已经入账。",
   },
   {
     id: "side_income",
     title: "副业收入",
-    category: "positive",
-    description: "本月副业收入增加，约等于本月收入增加 20%。",
-    effect: { type: "one_month_income_percent", amount: 0.2 },
-    insight: "副业收入不一定每月都有，但它出现时，能给主线现金流一点喘息。",
+    category: "choice",
+    description: "这个月有一笔副业机会。",
+    choices: [
+      {
+        label: "接下这单",
+        resultText: "你接下这单，收入变多，但这个月也多了交通、工具和外包杂费。",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "one_month_income_percent", amount: 0.22 },
+            { type: "one_month_expense_change", amount: 1200 },
+          ],
+        },
+      },
+      {
+        label: "只接小单",
+        resultText: "你只接一部分，收入增加一点，节奏也比较可控。",
+        effect: { type: "one_month_income_percent", amount: 0.1 },
+      },
+      {
+        label: "这次不接",
+        resultText: "你保留休息时间，本月现金流不变。",
+        effect: { type: "none" },
+      },
+    ],
+    insight: "副业机会已经处理。",
   },
   {
     id: "spending_control",
@@ -215,18 +312,56 @@ var eventCards = [
   {
     id: "tax_refund",
     title: "退税或补贴到账",
-    category: "positive",
-    description: "退税或补贴到账，现金储备增加 8000 元。",
-    effect: { type: "change_savings", amount: 8000 },
-    insight: "这笔钱像迟来的补给。先修安全垫，后面的地图会好走不少。",
+    category: "choice",
+    description: "退税或补贴到账 8000 元。",
+    choices: [
+      {
+        label: "补进现金储备",
+        resultText: "你把这笔钱留作现金储备。",
+        effect: { type: "change_savings", amount: 8000 },
+      },
+      {
+        label: "加码定投或先存着",
+        resultText: "如果已有定投计划，就拿一半补贴加码；如果还没开始定投，就先放进现金储备。",
+        effect: { type: "invest_or_reserve", amount: 8000, investPercent: 0.5 },
+      },
+      {
+        label: "换一件耐用品",
+        resultText: "你换了家里用很久的床垫，睡眠舒服一些，剩余部分进入储备。",
+        effect: { type: "change_savings", amount: 3200 },
+      },
+    ],
+    insight: "这笔到账已经处理。",
   },
   {
     id: "freelance_referral",
     title: "朋友介绍兼职单",
-    category: "positive",
-    description: "朋友介绍了一笔兼职单，本月收入增加约 25%。",
-    effect: { type: "one_month_income_percent", amount: 0.25 },
-    insight: "偶然出现的收入很提气，但它更适合修补缓冲，而不是立刻放大支出。",
+    category: "choice",
+    description: "朋友介绍了一笔兼职单。",
+    choices: [
+      {
+        label: "接完整单",
+        resultText: "你接下完整兼职，本月收入增加不少，但也多了沟通、交通和交付成本。",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "one_month_income_percent", amount: 0.26 },
+            { type: "one_month_expense_change", amount: 1800 },
+          ],
+        },
+      },
+      {
+        label: "只接一部分",
+        resultText: "你只接最确定的一部分，本月收入增加，但压力小一些。",
+        effect: { type: "one_month_income_percent", amount: 0.12 },
+      },
+      {
+        label: "婉拒这次",
+        resultText: "你没有接这笔兼职，本月现金流不变。",
+        effect: { type: "none" },
+      },
+    ],
+    insight: "兼职机会已经处理。",
   },
   {
     id: "sell_unused",
@@ -234,7 +369,7 @@ var eventCards = [
     category: "positive",
     description: "你清理闲置物品，现金储备增加 1200 元。",
     effect: { type: "change_savings", amount: 1200 },
-    insight: "有些现金其实躺在角落里，只是需要你把它翻出来。",
+    insight: "闲置物品已经卖出。",
   },
   {
     id: "subscription_cleanup",
@@ -242,7 +377,31 @@ var eventCards = [
     category: "positive",
     description: "你清理了几个很少使用的订阅，常规月支出减少 600 元。",
     effect: { type: "add_active_effect", target: "expense", amount: -600, duration: 999 },
-    insight: "现金流改善有时候不是赚更多，而是让漏水的地方少一点。",
+    insight: "订阅支出已经减少。",
+  },
+  {
+    id: "deposit_return",
+    title: "旧押金退回",
+    category: "positive",
+    description: "之前的一笔押金退回，现金储备增加 3000 元。",
+    effect: { type: "change_savings", amount: 3000 },
+    insight: "旧押金已经到账。",
+  },
+  {
+    id: "shopping_card",
+    title: "公司发放购物卡",
+    category: "positive",
+    description: "公司发放购物卡，本月日常支出减少 1000 元。",
+    effect: { type: "one_month_expense_change", amount: -1000 },
+    insight: "本月部分日常支出被抵扣。",
+  },
+  {
+    id: "credit_card_points",
+    title: "积分抵扣账单",
+    category: "positive",
+    description: "你用信用卡积分抵扣账单，本月支出减少 500 元。",
+    effect: { type: "one_month_expense_change", amount: -500 },
+    insight: "本月账单已经抵扣一部分。",
   },
   {
     id: "minor_illness",
@@ -256,7 +415,7 @@ var eventCards = [
         { type: "change_savings", amount: -5000 },
       ],
     },
-    insight: "生病最麻烦的地方，是收入和支出会同时朝不友好的方向动。",
+    insight: "本月收入和储备同时受到影响。",
   },
   {
     id: "family_care",
@@ -264,7 +423,7 @@ var eventCards = [
     category: "health_risk",
     description: "你需要请假照顾家人，本月收入减少约 25%。",
     effect: { type: "one_month_income_percent", amount: -0.25 },
-    insight: "照顾家人不是选择题，但现金流会把这段时间真实记下来。",
+    insight: "本月收入减少。",
   },
   {
     id: "dental_cost",
@@ -272,7 +431,7 @@ var eventCards = [
     category: "health_risk",
     description: "你进行牙齿治疗，一次性支出 6000 元。",
     effect: { type: "change_savings", amount: -6000 },
-    insight: "牙齿平时不说话，一开口就是账单。",
+    insight: "牙齿治疗已经结清。",
   },
   {
     id: "insurance_gap",
@@ -280,7 +439,7 @@ var eventCards = [
     category: "health_risk",
     description: "一次治疗后，医保已经报销了一部分，但仍有 15000 元需要自己支付。",
     effect: { type: "change_savings", amount: -15000 },
-    insight: "医保能挡住一部分风，但不一定挡住全部。现金储备和保障配置，都值得被认真看一眼。",
+    insight: "自付部分从现金储备里支出。",
   },
   {
     id: "child_fever",
@@ -294,7 +453,7 @@ var eventCards = [
         { type: "change_savings", amount: -2500 },
       ],
     },
-    insight: "家庭健康事件常常不是一张账单，而是一串临时安排。",
+    insight: "本月收入和储备同时受到影响。",
   },
   {
     id: "sports_injury",
@@ -302,7 +461,7 @@ var eventCards = [
     category: "health_risk",
     description: "运动受伤后需要检查和康复，一次性支出 6500 元。",
     effect: { type: "change_savings", amount: -6500 },
-    insight: "健康支出不一定巨大，但出现得很突然。",
+    insight: "运动康复支出已经结清。",
   },
   {
     id: "insurance_review_choice",
@@ -321,7 +480,7 @@ var eventCards = [
         effect: { type: "none" },
       },
     ],
-    insight: "保障配置不是为了赢一局游戏，而是为了让某些坏牌不至于直接打穿储备。",
+    insight: "保障选择已经记录。",
   },
   {
     id: "rent_or_commute_choice",
@@ -355,7 +514,7 @@ var eventCards = [
         effect: { type: "add_active_effect", target: "income", amount: -1000, duration: 999 },
       },
     ],
-    insight: "搬近一点短期看更贵，但如果精力能换回更好的收入，长期可能反而更划算。",
+    insight: "通勤选择已经生效。",
   },
   {
     id: "family_trip_choice",
@@ -370,11 +529,18 @@ var eventCards = [
       },
       {
         label: "暂时推迟",
-        resultText: "你保留现金储备，但临时取消行程损失了一些订金。",
-        effect: { type: "change_savings", amount: -1000 },
+        resultText: "你保留大部分现金储备，但会在后面安排一次补偿活动。",
+        effect: {
+          type: "schedule_savings_effect",
+          id: "family_trip_makeup",
+          triggerDelay: 2,
+          amount: -1200,
+          title: "补偿一次周末安排",
+          message: "之前推迟的短途旅行，后来换成了一次周末安排。",
+        },
       },
     ],
-    insight: "娱乐支出不是坏牌。问题在于，它要和现金储备一起排队。",
+    insight: "旅行选择已经生效。",
   },
   {
     id: "kids_theme_park",
@@ -382,7 +548,7 @@ var eventCards = [
     category: "one_time_cost",
     description: "周末带孩子去游乐场，门票、交通和餐饮一次性支出 1200 元。",
     effect: { type: "change_savings", amount: -1200 },
-    insight: "生活里的快乐也会花钱，但它不是财务错误，只是需要被看见。",
+    insight: "游乐场支出已经结清。",
   },
   {
     id: "movie_weekend",
@@ -390,7 +556,7 @@ var eventCards = [
     category: "one_time_cost",
     description: "你和家人朋友看电影、简单聚餐，一次性支出 600 元。",
     effect: { type: "change_savings", amount: -600 },
-    insight: "小额娱乐不会击穿现金流，但频率会决定它是不是变成固定地形。",
+    insight: "周末娱乐支出已经结清。",
   },
   {
     id: "hobby_class",
@@ -402,7 +568,20 @@ var eventCards = [
       {
         label: "报名",
         resultText: "你支付 1800 元报名课程，现金储备减少。",
-        effect: { type: "change_savings", amount: -1800 },
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "change_savings", amount: -1800 },
+            {
+              type: "schedule_savings_effect",
+              id: "hobby_small_order",
+              triggerDelay: 4,
+              amount: 800,
+              title: "兴趣带来小单",
+              message: "兴趣课程里认识的朋友介绍了一笔小单。",
+            },
+          ],
+        },
       },
       {
         label: "先等等",
@@ -410,7 +589,7 @@ var eventCards = [
         effect: { type: "none" },
       },
     ],
-    insight: "长期生活不能只靠压缩支出。偶尔给自己充电，也是一种维持。",
+    insight: "兴趣课程选择已经记录。",
   },
   {
     id: "fishing_gear_choice",
@@ -430,7 +609,7 @@ var eventCards = [
         effect: { type: "change_savings", amount: -300 },
       },
     ],
-    insight: "爱好不是错误，关键是别让一次尝鲜直接变成一串没想清楚的支出。",
+    insight: "钓鱼装备选择已经记录。",
   },
   {
     id: "outdoor_hike_choice",
@@ -442,7 +621,20 @@ var eventCards = [
       {
         label: "参加徒步",
         resultText: "你支付 1500 元参加徒步，现金储备减少。",
-        effect: { type: "change_savings", amount: -1500 },
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "change_savings", amount: -1500 },
+            {
+              type: "schedule_savings_effect",
+              id: "hike_gear_topup",
+              triggerDelay: 2,
+              amount: -600,
+              title: "补充户外装备",
+              message: "徒步之后，你补了几件基础户外装备。",
+            },
+          ],
+        },
       },
       {
         label: "城市公园走走",
@@ -450,7 +642,7 @@ var eventCards = [
         effect: { type: "none" },
       },
     ],
-    insight: "恢复精力也值得花钱。只是花多少，要和当下的安全垫商量一下。",
+    insight: "户外安排已经记录。",
   },
   {
     id: "yoga_membership_choice",
@@ -461,8 +653,21 @@ var eventCards = [
     choices: [
       {
         label: "买小课包",
-        resultText: "你每月增加 600 元运动支出，持续 3 个月。",
-        effect: { type: "add_active_effect", target: "expense", amount: 600, duration: 3 },
+        resultText: "你每月增加 1200 元运动支出，持续 3 个月。",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "add_active_effect", target: "expense", amount: 1200, duration: 3 },
+            {
+              type: "schedule_savings_effect",
+              id: "yoga_small_purchase",
+              triggerDelay: 2,
+              amount: -500,
+              title: "瑜伽用品补充",
+              message: "你补充了一些瑜伽用品。",
+            },
+          ],
+        },
       },
       {
         label: "先跟练视频",
@@ -470,7 +675,7 @@ var eventCards = [
         effect: { type: "none" },
       },
     ],
-    insight: "持续型兴趣支出最需要提前想清楚，因为它会跟着你走好几个月。",
+    insight: "瑜伽课程选择已经记录。",
   },
   {
     id: "index_dca_choice",
@@ -513,7 +718,7 @@ var eventCards = [
         effect: { type: "none" },
       },
     ],
-    insight: "有些钱花出去像播种，但播种也要先保证这个月的饭碗稳。",
+    insight: "课程选择已经记录。",
   },
   {
     id: "buy_car_choice",
@@ -528,11 +733,18 @@ var eventCards = [
       },
       {
         label: "暂不换车",
-        resultText: "你选择暂不换车，保留现金储备。",
-        effect: { type: "none" },
+        resultText: "你选择暂不换车，保留现金储备，但旧车后面可能需要小修。",
+        effect: {
+          type: "schedule_savings_effect",
+          id: "old_car_minor_repair",
+          triggerDelay: 4,
+          amount: -1800,
+          title: "旧车小修",
+          message: "暂时没换车后，旧车做了一次小修。",
+        },
       },
     ],
-    insight: "换车不是只付一次钱，它会把未来几个月的地图也一起改掉。",
+    insight: "换车选择已经记录。",
   },
   {
     id: "emergency_fund_choice",
@@ -551,6 +763,6 @@ var eventCards = [
         effect: { type: "none" },
       },
     ],
-    insight: "储备不是一夜长出来的。它更像每天给安全垫多塞一点棉花。",
+    insight: "储备计划选择已经记录。",
   },
 ];
