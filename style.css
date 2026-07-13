@@ -72,6 +72,55 @@ button {
   padding-bottom: max(16px, env(safe-area-inset-bottom));
 }
 
+.home-poster-screen {
+  gap: 8px;
+  padding: 0 0 max(10px, env(safe-area-inset-bottom));
+  background: #fbf3df;
+}
+
+.home-poster-wrap {
+  position: relative;
+  width: 100%;
+  overflow: visible;
+  background:
+    radial-gradient(circle at 50% 4%, rgba(255, 255, 255, 0.94), transparent 28%),
+    linear-gradient(180deg, #fff8e9, #f8e8bd);
+}
+
+.home-poster {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+.poster-start-hotspot {
+  position: absolute;
+  left: 7%;
+  right: 7%;
+  bottom: 1.8%;
+  min-height: 0;
+  height: 11%;
+  padding: 0;
+  border: 0;
+  border-radius: 24%;
+  appearance: none;
+  background: transparent;
+  color: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.poster-start-hotspot:focus-visible {
+  outline: 4px solid rgba(74, 138, 212, 0.38);
+  outline-offset: 3px;
+}
+
+.home-poster-screen .disclaimer {
+  padding: 0 18px;
+  text-align: center;
+}
+
 .top-kicker {
   display: inline-flex;
   align-items: center;

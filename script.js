@@ -183,55 +183,12 @@ function bufferBand(buffer) {
 }
 
 function renderHome() {
-  const savedActions = savedGameAvailable
-    ? `
-      <button class="button primary" data-action="continue">继续上次游戏</button>
-      <button class="button secondary" data-action="restart">重新开始</button>
-    `
-    : `
-      <button class="button primary" data-action="random">随机抽身份</button>
-      <button class="button secondary" data-action="custom">输入我的情况</button>
-    `;
-
   app.innerHTML = `
-    <section class="screen">
-      <div class="game-hero">
-        <div class="top-kicker"><span class="brand-mark"></span>现金流人生地图</div>
-        <div class="hero">
-          <h1>36 个月现金流生存挑战</h1>
-        </div>
-        <div class="hero-board" aria-hidden="true">
-          <div class="hero-route">
-            <span class="route-node hot"></span>
-            <span class="route-node calm"></span>
-            <span class="route-node risk"></span>
-            <span class="route-node choice"></span>
-            <span class="route-token"></span>
-          </div>
-          <div class="hero-dice" aria-label="骰子：每次前进 1 到 3 步">
-            <i></i>
-            <i></i>
-            <i></i>
-            <i></i>
-            <i></i>
-          </div>
-        </div>
+    <section class="screen home-poster-screen">
+      <div class="home-poster-wrap">
+        <img class="home-poster" src="assets/home-poster.png" alt="36 个月现金流生存挑战游戏海报，展示人生地图、身份卡牌、事件卡牌、骰子和安全垫。" />
+        <button class="poster-start-hotspot" data-action="start-game" aria-label="开始游戏"></button>
       </div>
-      <div class="mission-card">
-        <div class="mission-title">
-          <span>本局目标</span>
-          <strong>别让现金储备跌破 0</strong>
-        </div>
-        <div class="mission-steps">
-          <span>抽身份</span>
-          <i></i>
-          <span>掷骰前进</span>
-          <i></i>
-          <span>翻事件卡</span>
-        </div>
-      </div>
-      <p class="lead home-lead">你现在的生活，看起来很稳定。<br>但地图不会只发好牌。<br>连续几个月之后，<br>真正能救场的，是现金储备还剩多少。</p>
-      <div class="actions">${savedActions}</div>
       <p class="disclaimer">本游戏仅用于现金流管理和投资者教育场景下的模拟体验，不构成任何投资建议或收益承诺。</p>
     </section>
   `;
@@ -250,7 +207,8 @@ function renderRandomIdentity(identity = randomItem(identityCards)) {
       ${challengeLengthHtml()}
       <div class="actions">
         <button class="button primary" data-action="start-random" data-id="${identity.id}">使用这个身份开始游戏</button>
-        <button class="button secondary" data-action="random">重新抽一张</button>
+        <button class="button secondary" data-action="random">再抽一次</button>
+        <button class="button ghost" data-action="custom">自定义</button>
       </div>
     </section>
   `;
@@ -2783,6 +2741,14 @@ document.addEventListener("click", (event) => {
     savedGameAvailable = Boolean(loadSavedGame(false));
     player = null;
     renderHome();
+  }
+
+  if (action === "start-game") {
+    trackEvent("cash_game_start_clicked", {
+      // 记录：玩家从海报首页进入身份筛选页。
+      had_saved_game: savedGameAvailable,
+    });
+    renderRandomIdentity();
   }
 
   if (action === "random") {
