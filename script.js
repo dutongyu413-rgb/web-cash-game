@@ -186,7 +186,7 @@ function renderHome() {
   app.innerHTML = `
     <section class="screen home-poster-screen">
       <div class="home-poster-wrap">
-        <img class="home-poster" src="assets/home-poster.png" alt="36 个月现金流生存挑战游戏海报，展示人生地图、身份卡牌、事件卡牌、骰子和安全垫。" />
+        <img class="home-poster" src="assets/home-poster.jpg" width="941" height="1672" loading="eager" decoding="async" fetchpriority="high" alt="36 个月现金流生存挑战游戏海报，展示人生地图、身份卡牌、事件卡牌、骰子和安全垫。" />
         <button class="poster-start-hotspot" data-action="start-game" aria-label="开始游戏"></button>
       </div>
       <p class="disclaimer">本游戏仅用于现金流管理和投资者教育场景下的模拟体验，不构成任何投资建议或收益承诺。</p>
