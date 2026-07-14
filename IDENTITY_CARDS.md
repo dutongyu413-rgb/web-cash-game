@@ -55,6 +55,6 @@
 
 ## 数据维护位置
 
-当前实际数据在 [script.js](./script.js) 的 `identityCards` 数组中。
+当前实际数据在 [identity-cards.js](./identity-cards.js) 的 `identityCards` 数组中，游戏和数值模拟共用这份数据。
 
-如果修改本文件中的表格，也需要同步修改 `script.js`，否则游戏不会读取到新数据。
+如果修改本文件中的表格，也需要同步修改 `identity-cards.js`，否则游戏不会读取到新数据。修改后运行 `npm test` 和 `npm run simulate`，检查字段与数值基线。

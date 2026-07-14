@@ -12,6 +12,15 @@
 - 当前卡牌已增加轻量后续事件：换车、旅行推迟、兴趣课程、户外徒步、瑜伽课等选择会在后续月份产生回响。
 - 地图下方只展示正在生效的长期计划和临时支出；买车、推迟旅行等后续事件默认不展示“待生效”，保留随机感。
 - 最终结果页“最重一击”已改为“累计冲击”口径，按玩家实际经历过的收入减少、支出增加和现金储备消耗累计，不再按最坏情况预估。
+- 月度结算、历史记录和结果轨迹现已共用月度快照；历史金额记录结算后的实际储备，不再记录事件刚生效但尚未结算的中间值。
+- 主动结束改为二次确认，并按实际完成月份生成“阶段结果”；最终月的后续事件会全部展示后再进入结果页。
+- 已加入可复现随机种子和 Node 核心规则测试，便于内部测试复现卡牌与财务计算问题。
+- 第二轮新手体验已完成：首次开局显示三步引导，之后不再自动打断；本局菜单可重新查看玩法说明。
+- 地图页已收敛为月份、现金储备、安全垫、月收入和月支出五项核心信息；结束和重开入口移入菜单。
+- 事件增加短暂揭晓动效和选项确认反馈；本月结算只保留本月现金流、现金储备和实际特殊影响，不再展示“本月分析”。
+- 第三轮内部测试能力已完成：调试模式增加可视化 TEST 面板，可固定种子、指定事件、修改月份和储备、重置引导并复制诊断信息。
+- 自动测试现已覆盖核心财务规则、56张事件卡字段与效果、13个身份字段，以及数值模拟的可复现性。
+- 已加入批量数值模拟器，当前基线共运行14,040局，只用于发现异常，不干预正式游戏的随机抽卡。
 - 页面样式仍在迭代中，当前更适合内部试玩和收集反馈。
 
 ## 如何运行
@@ -27,21 +36,41 @@ npm run dev
 
 默认访问地址见终端输出，一般是 `http://127.0.0.1:4173`。
 
+运行核心规则测试：
+
+```bash
+npm test
+```
+
+重新生成数值模拟基线：
+
+```bash
+npm run simulate
+```
+
 ## 文件结构
 
 ```text
 index.html          页面入口，按顺序加载样式、事件卡和主脚本
 style.css           全部界面样式
+identity-cards.js   身份卡数据，供游戏和数值模拟共用
 event-cards.js      事件卡牌数据
+game-core.js        存档迁移、可复现随机数和纯财务计算
+game-core.test.js   核心规则自动化测试
+event-cards.test.js 全卡牌和身份字段自动校验
+balance-sim.js      内部数值模拟器
+balance-sim.test.js 数值模拟可复现性测试
+BALANCE_BASELINE.md 当前数值模拟基线
 script.js           游戏状态、结算、抽卡、地图、长期计划等主逻辑
 IDENTITY_CARDS.md   身份卡数据说明和当前职业角色表
+INTERNAL_TEST_GUIDE.md 内部测试路线、反馈模板与发布检查表
 dev-server.mjs      简单本地静态服务
 package.json        本地运行脚本
 ```
 
 ## 身份卡怎么改
 
-身份卡当前仍在 `script.js` 的 `identityCards` 中维护，详细数据单独整理在 [IDENTITY_CARDS.md](./IDENTITY_CARDS.md)。
+身份卡当前在 `identity-cards.js` 中维护，浏览器游戏和数值模拟读取同一份数据；详细字段说明整理在 [IDENTITY_CARDS.md](./IDENTITY_CARDS.md)。
 
 当前身份卡只保留会直接影响游戏的字段：
 
@@ -78,7 +107,7 @@ package.json        本地运行脚本
 - `description`：玩家看到的事件描述。
 - `effect`：财务影响。
 - `choices`：可选项卡牌使用，替代 `effect`。
-- `insight`：本月结算里的简短分析。
+- `insight`：保留的分析字段，当前版本不在本月结算和最终报告中展示。
 - `group`：可选，用于控制同组卡牌频率，例如兴趣类事件。
 
 当前 `category`：
@@ -189,16 +218,57 @@ project: "cash_game"
 | `cash_game_resumed` | 玩家继续上次游戏 |
 | `cash_game_restarted` | 玩家重新开始 |
 | `cash_game_dice_rolled` | 玩家掷骰进入回合 |
+| `cash_game_onboarding_shown` | 首次引导或菜单玩法说明被打开 |
+| `cash_game_onboarding_completed` | 玩家完成三步引导 |
+| `cash_game_onboarding_skipped` | 玩家跳过或关闭引导 |
 | `cash_game_card_resolved` | 玩家处理了一张事件卡 |
 | `cash_game_month_settled` | 玩家完成本月结算 |
 | `cash_game_history_opened` | 玩家打开人生日志 |
-| `cash_game_report_requested` | 玩家主动查看报告 |
+| `cash_game_report_requested` | 玩家确认主动结束并请求阶段结果 |
 | `cash_game_protection_started` | 玩家配置基础保障 |
 | `cash_game_dca_started` | 玩家开启定投计划 |
 | `cash_game_investment_choice_made` | 玩家在投资后续事件中做出选择 |
 | `cash_game_investment_sold` | 玩家卖出一半或全部投资持仓 |
-| `cash_game_completed` | 玩家完成挑战或主动结束后进入结果页 |
+| `cash_game_completed` | 玩家完成全部挑战后进入结果页 |
+| `cash_game_ended_manually` | 玩家主动结束后进入阶段结果页 |
 | `cash_game_failed` | 现金储备被击穿后进入结果页 |
+
+## 内部测试模式
+
+测试模式只在 URL 带 `debug=1` 或 `seed` 时启用，不影响普通玩家。
+
+```text
+http://127.0.0.1:4173/?debug=1&seed=round1
+```
+
+可选参数：
+
+- `seed`：固定随机序列；同一种子和同样操作可复现相同结果。
+- `event`：强制下一张事件卡，例如 `event=sports_injury`。
+- `months`：预设挑战长度，可选 12、24、36。
+- `month`：从指定月份开始，仅用于快速验证最终月和后续事件。
+
+调试模式下还可在浏览器控制台使用 `CashGameDebug.forceNextEvent()`、`setSeed()`、`setMonth()`、`setSavings()` 和 `getState()`。
+
+开始一局后，地图右上角会出现 `TEST` 按钮。可视化测试面板支持：
+
+- 修改随机种子、当前月份和现金储备。
+- 从全部事件卡中指定下一张测试卡。
+- 重置首次新手引导。
+- 复制本局诊断信息；自定义身份的具体金额会自动隐藏。
+
+测试面板不会出现在普通试玩链接中，也不会改变正式卡池的概率和冷却规则。完整测试路线见 [INTERNAL_TEST_GUIDE.md](./INTERNAL_TEST_GUIDE.md)。
+
+## 数值模拟基线
+
+运行 `npm run simulate` 会重新生成 [BALANCE_BASELINE.md](./BALANCE_BASELINE.md)。当前模拟覆盖：
+
+- 13个预设身份。
+- 12、24、36个月三种挑战长度。
+- 随机选择、储备优先、积极参与三种选择倾向。
+- 每个组合120局，共14,040局。
+
+模拟只用于发现完成率、失败月份、身份差异和高冲击事件中的异常。它不会替代真人试玩，也不会自动调整卡牌或限制坏运气。
 
 ### 隐私边界
 
@@ -217,7 +287,17 @@ project: "cash_game"
 - 挑战长度：12、24 或 36
 - 事件类型：健康、收入、选择等
 - 是否发生卖出
+- 首次开局到第一次掷骰所用的秒数
 - 安全垫区间，例如 `1_to_3_months`
+
+## 当前新手流程
+
+1. 首页点击“开始游戏”，进入身份选择。
+2. 选择身份和挑战长度后进入地图。
+3. 首次开局显示三步短引导：完成挑战、掷骰前进、现金储备不能低于 0。
+4. 完成或跳过后不再自动展示；地图右上角菜单可以重新打开“玩法说明”。
+
+地图页只保留一个主操作“掷骰前进”。“结束本局”和“重新开始”放在右上角菜单内，其中重新开始增加二次确认。
 
 ## 当前定投和卖出逻辑
 

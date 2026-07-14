@@ -1,6 +1,11 @@
 {
+  "name": "cashflow-life-map",
+  "version": "0.3.0",
+  "private": true,
   "scripts": {
-    "dev": "node dev-server.mjs"
+    "dev": "node dev-server.mjs",
+    "test": "node --test",
+    "simulate": "node balance-sim.js --write"
   },
   "devDependencies": {}
 }

@@ -3,6 +3,11 @@ const app = document.getElementById("app");
 const toast = document.getElementById("toast");
 const TRACKING_PROJECT = "cash_game";
 const TRACKING_SCRIPT_SRC = "https://cloud.umami.is/script.js";
+const ONBOARDING_STORAGE_KEY = "cashflowLifeMapOnboardingV2";
+const APP_VERSION = "0.3.0-internal";
+const GAME_STATE_VERSION = window.CashGameCore?.GAME_STATE_VERSION || 2;
+const debugParams = new URLSearchParams(window.location.search);
+const debugMode = debugParams.get("debug") === "1" || debugParams.has("seed");
 
 let player = null;
 let savedGameAvailable = false;
@@ -11,106 +16,21 @@ let pendingMonthlySummary = null;
 let selectedMaxMonth = 36;
 let mapMotion = null;
 let pendingTrackingEvents = [];
+let debugRandomState = window.CashGameCore.normalizeSeed(debugParams.get("seed") || "cash-game-debug");
+let debugSeedText = debugParams.get("seed") || "cash-game-debug";
+let debugForcedEventId = debugParams.get("event") || null;
+let onboardingStep = 0;
+let onboardingManual = false;
+let eventRevealTimer = null;
 
 const challengeLengths = [12, 24, 36];
+if (debugMode && challengeLengths.includes(Number(debugParams.get("months")))) {
+  selectedMaxMonth = Number(debugParams.get("months"));
+}
 
 const currencyFormatter = new Intl.NumberFormat("zh-CN", {
   maximumFractionDigits: 0,
 });
-
-const identityCards = [
-  {
-    id: "young_worker",
-    name: "企业白领",
-    income: 18000,
-    expense: 13000,
-    savings: 40000,
-  },
-  {
-    id: "freelancer",
-    name: "自媒体博主",
-    income: 22000,
-    expense: 12000,
-    savings: 70000,
-  },
-  {
-    id: "small_shop_owner",
-    name: "餐饮老板",
-    income: 30000,
-    expense: 25000,
-    savings: 100000,
-  },
-  {
-    id: "stable_employee",
-    name: "教师",
-    income: 13000,
-    expense: 8000,
-    savings: 90000,
-  },
-  {
-    id: "single_parent",
-    name: "销售",
-    income: 20000,
-    expense: 17000,
-    savings: 50000,
-  },
-  {
-    id: "senior_engineer",
-    name: "高级工程师",
-    income: 40000,
-    expense: 26000,
-    savings: 160000,
-  },
-  {
-    id: "data_analyst",
-    name: "数据分析师",
-    income: 24000,
-    expense: 15000,
-    savings: 80000,
-  },
-  {
-    id: "architect",
-    name: "建筑师",
-    income: 30000,
-    expense: 21000,
-    savings: 100000,
-  },
-  {
-    id: "doctor",
-    name: "医生",
-    income: 35000,
-    expense: 24000,
-    savings: 120000,
-  },
-  {
-    id: "athlete",
-    name: "运动员",
-    income: 28000,
-    expense: 22000,
-    savings: 60000,
-  },
-  {
-    id: "programmer",
-    name: "程序员",
-    income: 30000,
-    expense: 18000,
-    savings: 100000,
-  },
-  {
-    id: "home_organizer",
-    name: "收纳师",
-    income: 16000,
-    expense: 9000,
-    savings: 50000,
-  },
-  {
-    id: "librarian",
-    name: "图书管理员",
-    income: 9000,
-    expense: 6000,
-    savings: 40000,
-  },
-];
 
 const mapCells = [
   { label: "家庭", type: "family", categories: ["expense_up", "one_time_cost"] },
@@ -202,6 +122,7 @@ function renderRandomIdentity(identity = randomItem(identityCards)) {
           <h1 class="page-title">抽到的身份</h1>
           <button class="button ghost small" data-action="home">返回</button>
         </div>
+        <p class="identity-prompt">选定身份与挑战长度</p>
       </div>
       ${identityCardHtml(identity)}
       ${challengeLengthHtml()}
@@ -296,7 +217,7 @@ function challengeLengthHtml() {
   `;
 }
 
-function renderGamePage(message = "点击掷骰子，在人生地图上前进。", options = {}) {
+function renderGamePage(message = "", options = {}) {
   if (!player) {
     renderHome();
     return;
@@ -307,6 +228,8 @@ function renderGamePage(message = "点击掷骰子，在人生地图上前进。
   const buffer = calculateBuffer();
   const bufferStatus = getBufferStatus(buffer);
   const monthProgress = Math.round((player.currentMonth / player.maxMonth) * 100);
+  const reserveChange = pendingMonthlySummary?.savingsDelta || 0;
+  const reserveChangeClass = reserveChange > 0 ? "is-rising" : reserveChange < 0 ? "is-falling" : "";
   const dcaPlan = getDcaPlan();
   const protectionPlan = getProtectionPlan();
   const temporaryExpenseEffects = getTemporaryExpenseEffects();
@@ -364,23 +287,32 @@ function renderGamePage(message = "点击掷骰子，在人生地图上前进。
   app.innerHTML = `
     <section class="screen game-screen">
       <div class="status-bar">
-        <div class="month-row">
-          <div>
+        <div class="hud-progress-row">
+          <div class="hud-month">
             <span class="hud-label">当前进度</span>
             <strong>第 ${player.currentMonth} / ${player.maxMonth} 个月</strong>
           </div>
-          ${bufferPill(buffer)}
+          <div class="hud-tools">
+            ${debugMode ? `<button class="debug-mode-button" data-action="debug-panel" aria-label="打开内部测试面板">TEST</button>` : ""}
+            <button class="hud-menu-button" data-action="game-menu" aria-label="更多选项" title="更多选项"><span aria-hidden="true">•••</span></button>
+          </div>
         </div>
         <div class="progress-track" aria-label="挑战进度"><i style="width:${monthProgress}%"></i></div>
-        <div class="shield-meter compact">
-          <div class="meter-head"><span>现金流安全垫</span><strong>${bufferStatus.text}</strong></div>
-          <div class="meter-track"><i class="${bufferStatus.className}" style="width:${getShieldPercent(buffer)}%"></i></div>
+        <div class="hud-core">
+          <div class="hud-reserve ${reserveChangeClass}">
+            <span>现金储备</span>
+            <strong>${formatMoney(player.savings)}</strong>
+          </div>
+          <div class="hud-buffer">
+            <div><span>安全垫</span><strong>${formatBuffer(buffer)} 个月</strong></div>
+            <div class="hud-buffer-status"><span>${bufferStatus.text}</span></div>
+            <div class="meter-track"><i class="${bufferStatus.className}" style="width:${getShieldPercent(buffer)}%"></i></div>
+          </div>
         </div>
-        <div class="mini-stats">
-          <div class="mini-stat"><span>常规月收入</span><strong>${formatMoney(currentIncome)}</strong></div>
-          <div class="mini-stat"><span>常规月支出</span><strong>${formatMoney(currentExpense)}</strong></div>
-          <div class="mini-stat"><span>现金储备</span><strong>${formatMoney(player.savings)}</strong></div>
-          <div class="mini-stat"><span>安全垫</span><strong>${formatBuffer(buffer)} 个月</strong></div>
+        <div class="hud-cashflow">
+          <div><span>月收入</span><strong>${formatMoney(currentIncome)}</strong></div>
+          <i aria-hidden="true"></i>
+          <div><span>月支出</span><strong>${formatMoney(currentExpense)}</strong></div>
         </div>
       </div>
       <div class="map-panel">
@@ -390,6 +322,7 @@ function renderGamePage(message = "点击掷骰子，在人生地图上前进。
             <small>路在往前延伸，事件停下后才揭晓</small>
           </div>
         </div>
+        ${message ? `<div class="turn-cue" role="status" aria-live="polite">${escapeHtml(message)}</div>` : ""}
         <div class="journey-map ${mapMotion ? "is-moving" : ""}" style="${mapMotion ? `--drift-x:${mapMotion.driftX}px; --drift-y:${mapMotion.driftY}px;` : ""}">
           ${moveBannerHtml}
           <div class="map-depth" aria-hidden="true">
@@ -416,14 +349,12 @@ function renderGamePage(message = "点击掷骰子，在人生地图上前进。
         </div>
       </div>
       ${planHtml}
-      <div class="bottom-bar">
-        <button class="button primary roll-button" data-action="roll" ${player.gameEnded || mapMotion ? "disabled" : ""}>
+      <div class="bottom-bar game-actions">
+        <button class="button primary roll-button ${getCompletedMonths() === 0 && !lastDice ? "is-ready" : ""}" data-action="roll" ${player.gameEnded || mapMotion ? "disabled" : ""}>
           <span class="dice-face">${lastDice || "?"}</span>
           掷骰前进
         </button>
-        <button class="button secondary" data-action="history">查看历史</button>
-        <button class="button secondary" data-action="end-now">查看报告</button>
-        <button class="button danger" data-action="restart">重新开始</button>
+        <button class="button secondary history-button" data-action="history">人生日志</button>
       </div>
       <p class="disclaimer">本游戏仅用于现金流管理和投资者教育场景下的模拟体验，不构成任何投资建议或收益承诺。</p>
     </section>
@@ -439,6 +370,8 @@ function rollDice() {
     // 记录：玩家掷骰前进，用于判断玩家是否真正进入游玩循环。
     month: player.currentMonth,
     challenge_length: player.maxMonth,
+    first_roll_seconds:
+      getCompletedMonths() === 0 && player.startedAt ? Math.max(0, Math.round((Date.now() - player.startedAt) / 1000)) : null,
   });
   mapMotion = {
     driftX: -lastDice * 34,
@@ -450,8 +383,294 @@ function rollDice() {
   window.setTimeout(() => {
     mapMotion = null;
     renderGamePage(`你停在新的节点上，事件即将揭晓。`, { skipEcho: true });
-    window.setTimeout(() => showEventCard(event), 120);
+    window.setTimeout(() => revealEventCard(event), 120);
   }, 760);
+}
+
+function revealEventCard(event) {
+  if (!event) return;
+  if (prefersReducedMotion()) {
+    showEventCard(event);
+    return;
+  }
+  openModal(`
+    <div class="event-reveal-card ${categoryClass(event.category)}" aria-label="事件卡揭晓中">
+      <div class="event-reveal-line"><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="event-reveal-mark">?</div>
+    </div>
+  `);
+  window.clearTimeout(eventRevealTimer);
+  eventRevealTimer = window.setTimeout(() => showEventCard(event), 320);
+}
+
+function maybeStartOnboarding() {
+  if (debugMode || hasSeenOnboarding()) return;
+  startOnboarding(false);
+}
+
+function startOnboarding(manual = false) {
+  onboardingStep = 0;
+  onboardingManual = manual;
+  closeModal();
+  renderOnboarding();
+  trackEvent("cash_game_onboarding_shown", {
+    source: manual ? "game_menu" : "first_game",
+    challenge_length: player?.maxMonth || selectedMaxMonth,
+  });
+}
+
+function renderOnboarding() {
+  document.querySelectorAll(".onboarding-backdrop").forEach((node) => node.remove());
+  const steps = [
+    {
+      label: "挑战目标",
+      title: `完成 ${player?.maxMonth || selectedMaxMonth} 个月`,
+      text: "现金储备保持在 0 元以上",
+      visual: `<div class="guide-route" aria-hidden="true"><i></i><i></i><i></i><i></i><span></span></div>`,
+    },
+    {
+      label: "每个月",
+      title: "掷骰前进",
+      text: "停下后处理一张事件卡",
+      visual: `<div class="guide-dice" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>`,
+    },
+    {
+      label: "本局关键",
+      title: "现金储备",
+      text: "低于 0 元，本局结束",
+      visual: `<div class="guide-reserve" aria-hidden="true"><strong>¥</strong><span><i></i></span></div>`,
+    },
+  ];
+  const step = steps[onboardingStep];
+  const isLast = onboardingStep === steps.length - 1;
+  const backdrop = document.createElement("div");
+  backdrop.className = "onboarding-backdrop";
+  backdrop.innerHTML = `
+    <section class="onboarding-card" role="dialog" aria-modal="true" aria-label="玩法引导">
+      <div class="onboarding-progress" aria-label="第 ${onboardingStep + 1} 步，共 ${steps.length} 步">
+        ${steps.map((_, index) => `<i class="${index <= onboardingStep ? "active" : ""}"></i>`).join("")}
+      </div>
+      <div class="onboarding-visual">${step.visual}</div>
+      <span class="onboarding-label">${escapeHtml(step.label)}</span>
+      <h2>${escapeHtml(step.title)}</h2>
+      <p>${escapeHtml(step.text)}</p>
+      <div class="onboarding-actions">
+        <button class="button ghost small" data-action="skip-onboarding">${onboardingManual ? "关闭" : "跳过"}</button>
+        <button class="button primary" data-action="next-onboarding">${isLast ? (onboardingManual ? "回到游戏" : "开始前进") : "下一步"}</button>
+      </div>
+    </section>
+  `;
+  document.body.appendChild(backdrop);
+}
+
+function nextOnboardingStep() {
+  if (onboardingStep < 2) {
+    onboardingStep += 1;
+    renderOnboarding();
+    return;
+  }
+  finishOnboarding("completed");
+}
+
+function finishOnboarding(outcome) {
+  document.querySelectorAll(".onboarding-backdrop").forEach((node) => node.remove());
+  if (!onboardingManual) markOnboardingSeen();
+  trackEvent(outcome === "completed" ? "cash_game_onboarding_completed" : "cash_game_onboarding_skipped", {
+    step: onboardingStep + 1,
+    source: onboardingManual ? "game_menu" : "first_game",
+  });
+  onboardingManual = false;
+}
+
+function hasSeenOnboarding() {
+  try {
+    return localStorage.getItem(ONBOARDING_STORAGE_KEY) === "seen";
+  } catch {
+    return false;
+  }
+}
+
+function markOnboardingSeen() {
+  try {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "seen");
+  } catch {
+    // The guide can still run when storage is unavailable.
+  }
+}
+
+function renderGameMenu() {
+  openModal(`
+    <div class="game-menu-sheet">
+      <div class="menu-sheet-head">
+        <span>第 ${player.currentMonth} / ${player.maxMonth} 个月</span>
+        <h2>本局菜单</h2>
+      </div>
+      <div class="menu-list">
+        <button data-action="show-rules"><strong>玩法说明</strong><span>重新查看三步引导</span></button>
+        ${debugMode ? `<button data-action="debug-panel"><strong>内部测试面板</strong><span>${APP_VERSION} · 固定事件与导出诊断</span></button>` : ""}
+        <button data-action="end-now"><strong>结束本局</strong><span>生成当前阶段结果</span></button>
+        <button class="is-danger" data-action="request-restart"><strong>重新开始</strong><span>放弃当前进度</span></button>
+      </div>
+      <div class="modal-actions"><button class="button secondary" data-action="close-modal">关闭</button></div>
+    </div>
+  `);
+}
+
+function renderDebugPanel() {
+  if (!debugMode || !player) return;
+  const currentEvent = debugForcedEventId ? eventCards.find((event) => event.id === debugForcedEventId) : null;
+  const eventOptions = [...eventCards]
+    .sort((first, second) => first.title.localeCompare(second.title, "zh-CN"))
+    .map(
+      (event) =>
+        `<option value="${escapeHtml(event.id)}" ${event.id === debugForcedEventId ? "selected" : ""}>${escapeHtml(event.title)} · ${escapeHtml(categoryLabel(event.category))}</option>`,
+    )
+    .join("");
+
+  openModal(`
+    <div class="debug-panel">
+      <div class="debug-panel-head">
+        <span>INTERNAL TEST · ${APP_VERSION}</span>
+        <h2>内部测试面板</h2>
+        <p>这些设置只影响当前浏览器中的测试局，不会改变正式玩家的随机规则。</p>
+      </div>
+      <div class="debug-state-summary">
+        <div><span>身份</span><strong>${escapeHtml(player.identityName)}</strong></div>
+        <div><span>当前状态</span><strong>第 ${player.currentMonth} 月 · ${formatBuffer(calculateBuffer())} 个月</strong></div>
+      </div>
+      <form class="debug-form" id="debugStateForm">
+        <label>随机种子<input name="seed" value="${escapeHtml(debugSeedText)}" autocomplete="off" /></label>
+        <div class="debug-field-row">
+          <label>当前月份<input name="month" type="number" min="1" max="${player.maxMonth}" value="${player.currentMonth}" /></label>
+          <label>现金储备<input name="savings" type="number" step="100" value="${Math.round(player.savings)}" /></label>
+        </div>
+        <button class="button secondary" type="submit">应用测试状态</button>
+      </form>
+      <form class="debug-form" id="debugEventForm">
+        <label>指定下一张卡<select name="eventId">${eventOptions}</select></label>
+        <button class="button primary" type="submit">设置并返回地图</button>
+        ${currentEvent ? `<small>已指定：${escapeHtml(currentEvent.title)}。下一次掷骰时触发。</small>` : ""}
+      </form>
+      <div class="debug-tools">
+        <button class="button ghost" data-action="debug-copy">复制测试诊断</button>
+        <button class="button ghost" data-action="debug-reset-onboarding">重置新手引导</button>
+      </div>
+      <p class="debug-privacy">诊断信息保存在剪贴板中，不会自动上传；自定义身份的具体金额会被隐藏。</p>
+      <div class="modal-actions"><button class="button secondary" data-action="close-modal">关闭</button></div>
+    </div>
+  `);
+}
+
+function getDebugDiagnostic() {
+  if (!player) return null;
+  const customIdentity = player.identityId === "custom" || player.identityName === "自定义角色";
+  return {
+    appVersion: APP_VERSION,
+    stateVersion: GAME_STATE_VERSION,
+    capturedAt: new Date().toISOString(),
+    seed: debugSeedText,
+    randomState: player.randomState ?? debugRandomState,
+    forcedEventId: debugForcedEventId,
+    identity: { id: player.identityId, name: player.identityName },
+    challenge: {
+      currentMonth: player.currentMonth,
+      completedMonths: getCompletedMonths(),
+      maxMonth: player.maxMonth,
+      gameEnded: Boolean(player.gameEnded),
+      endReason: player.endReason || null,
+    },
+    finances: customIdentity
+      ? { hidden: true, bufferBand: bufferBand(calculateBuffer()) }
+      : {
+          savings: Math.round(player.savings),
+          recurringIncome: calculateRecurringIncome(),
+          recurringExpense: calculateRecurringExpense(),
+          buffer: Number(formatBuffer(calculateBuffer())),
+        },
+    activeEffects: (player.activeEffects || []).map((effect) => ({
+      name: effect.name || null,
+      target: effect.target,
+      amount: effect.amount,
+      remainingMonths: effect.remainingMonths,
+      sourceEventId: effect.sourceEventId || null,
+      sourcePlanId: effect.sourcePlanId || null,
+    })),
+    plans: (player.longTermPlans || []).map((plan) => ({
+      id: plan.id,
+      status: plan.status,
+      startMonth: plan.startMonth,
+      remainingMonths: plan.remainingMonths ?? null,
+    })),
+    recentDraws: (player.eventDrawHistory || []).slice(-12),
+    recentHistory: (player.history || []).slice(-8).map((item) => ({
+      month: item.month,
+      eventTitle: item.eventTitle,
+      choice: item.choice || null,
+      entryType: item.entryType || "event",
+    })),
+    pendingScheduledCards: (player.scheduledCards || [])
+      .filter((card) => !card.triggered)
+      .map((card) => ({ id: card.id, triggerMonth: card.triggerMonth, type: card.type || "follow_up" })),
+  };
+}
+
+function copyDebugDiagnostic() {
+  const diagnostic = getDebugDiagnostic();
+  if (!diagnostic) return;
+  const text = JSON.stringify(diagnostic, null, 2);
+  const copyFallback = () => {
+    const field = document.createElement("textarea");
+    field.value = text;
+    field.setAttribute("readonly", "");
+    field.style.position = "fixed";
+    field.style.opacity = "0";
+    document.body.appendChild(field);
+    field.select();
+    document.execCommand("copy");
+    field.remove();
+    showToast("测试诊断已复制。");
+  };
+
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(() => showToast("测试诊断已复制。"), copyFallback);
+    return;
+  }
+  copyFallback();
+}
+
+function resetDebugOnboarding() {
+  try {
+    localStorage.removeItem(ONBOARDING_STORAGE_KEY);
+    showToast("新手引导已重置，下次新开局会再次展示。");
+  } catch {
+    showToast("当前浏览器无法重置引导。");
+  }
+}
+
+function requestRestart() {
+  openModal(`
+    <h2>重新开始？</h2>
+    <p>当前 ${getCompletedMonths()} 个月的进度将被清除。</p>
+    <div class="modal-actions">
+      <button class="button secondary" data-action="close-modal">保留进度</button>
+      <button class="button danger" data-action="confirm-restart">清除并重新开始</button>
+    </div>
+  `);
+}
+
+function restartGame() {
+  trackEvent("cash_game_restarted", {
+    from_month: player?.currentMonth || null,
+    had_active_game: Boolean(player && !player.gameEnded),
+  });
+  clearSavedGame();
+  savedGameAvailable = false;
+  player = null;
+  lastDice = null;
+  pendingMonthlySummary = null;
+  document.querySelectorAll(".onboarding-backdrop").forEach((node) => node.remove());
+  closeModal();
+  renderHome();
 }
 
 function showEventCard(event) {
@@ -475,8 +694,12 @@ function showEventCard(event) {
           protectionPreview
             ? `
               <div class="protection-preview">
-                <strong>基础保障可用</strong>
-                <span>预计可减少 ${formatPercent(protectionPreview.coverageRate)} 的自付损失，本次约少花 ${formatMoney(protectionPreview.reduction)}。</span>
+                <strong>基础保障生效</strong>
+                <div class="protection-preview-metrics">
+                  <span>原支出<b>${formatMoney(protectionPreview.originalLoss)}</b></span>
+                  <span>保障减少<b>-${formatMoney(protectionPreview.reduction)}</b></span>
+                  <span>实际支出<b>${formatMoney(protectionPreview.actualLoss)}</b></span>
+                </div>
               </div>
             `
             : ""
@@ -529,7 +752,7 @@ function confirmEvent(eventId, choiceIndex = null) {
   applyEffect(effect, event);
   const afterEffect = captureMonthState();
   pendingMonthlySummary = buildMonthlySummary(event, choice, before, afterEffect);
-  addToHistory(event, choice, afterEffect);
+  player.pendingMonthlySummary = pendingMonthlySummary;
   recordEventDraw(event.id);
   trackEvent("cash_game_card_resolved", {
     // 记录：玩家处理了一张事件卡，用于分析哪些卡牌和选择被触发。
@@ -539,9 +762,15 @@ function confirmEvent(eventId, choiceIndex = null) {
     choice_index: choice ? Number(choiceIndex) : null,
     month: player.currentMonth,
   });
+  saveGame();
   closeModal();
-  renderGamePage(`「${event.title}」已经生效，本月结算如下。`, { skipEcho: true });
+  updateTurnCue("事件影响已确认");
   showMonthlySummary();
+}
+
+function updateTurnCue(message) {
+  const cue = document.querySelector(".turn-cue");
+  if (cue) cue.textContent = message;
 }
 
 function showMonthlySummary() {
@@ -552,9 +781,11 @@ function showMonthlySummary() {
   const detailRows = [
     summary.tempIncomeDelta ? ["临时收入影响", formatSignedMoney(summary.tempIncomeDelta), ""] : null,
     summary.tempExpenseDelta ? ["临时支出影响", formatSignedMoney(summary.tempExpenseDelta), ""] : null,
-    summary.protectionReduction ? ["保障减少损失", `+${formatMoney(summary.protectionReduction)}`, "good"] : null,
     summary.reserveDelta ? ["一次性储备变动", formatSignedMoney(summary.reserveDelta), ""] : null,
   ].filter(Boolean);
+  const protectionActualLoss = Math.max(0, -(summary.reserveDelta || 0));
+  const protectionOriginalLoss = protectionActualLoss + (summary.protectionReduction || 0);
+  const continueLabel = player.currentMonth >= player.maxMonth || summary.savingsAfterMonth < 0 ? "查看本局结果" : "继续前进";
   const detailRowsHtml = detailRows.length
     ? `
       <div class="settlement-details">
@@ -564,36 +795,26 @@ function showMonthlySummary() {
     : "";
   openModal(`
     <div class="settlement-card ${settlementClass}">
-      <div class="settlement-verdict ${verdict.className}">
-        <span>本回合结果</span>
-        <strong>${escapeHtml(verdict.title)}</strong>
-        <small>${escapeHtml(verdict.text)}</small>
-      </div>
       <div class="settlement-head">
         <h2>本月结算</h2>
         <span class="round-badge">${escapeHtml(summary.roundLabel)}</span>
         <p>${escapeHtml(summary.eventTitle)}${summary.choiceLabel ? ` · 选择「${escapeHtml(summary.choiceLabel)}」` : ""}</p>
       </div>
-      <div class="buffer-shift">
-        <div class="buffer-shift-head">
-          <span>安全垫变化</span>
-          <strong>${formatBuffer(summary.bufferBefore)} → ${formatBuffer(summary.bufferAfterMonth)} 个月</strong>
-        </div>
-        <div class="buffer-shift-track">
-          <i class="before" style="width:${getShieldPercent(summary.bufferBefore)}%"></i>
-          <i class="after ${settlementClass}" style="width:${getShieldPercent(summary.bufferAfterMonth)}%"></i>
-        </div>
+      <div class="settlement-verdict ${verdict.className}">
+        <span>本月状态</span>
+        <strong>${escapeHtml(verdict.title)}</strong>
       </div>
       <div class="settlement-core">
         <div class="settlement-main-card cashflow-card">
-          <span>现金流入流出</span>
-          <strong>${formatSignedMoney(summary.monthlyNetCashflow)}</strong>
-          <small>收入 ${formatMoney(summary.currentIncome)} · 支出 ${formatMoney(summary.currentExpense)}</small>
+          <span>本月现金流</span>
+          <strong data-animate-number="${summary.monthlyNetCashflow}" data-signed="true">${formatSignedMoney(summary.monthlyNetCashflow)}</strong>
+          <small>${summary.monthlyNetCashflow >= 0 ? "净流入" : "净流出"}</small>
         </div>
         <div class="settlement-main-card savings-card">
-          <span>当前储蓄</span>
-          <strong>${formatMoney(summary.savingsAfterMonth)}</strong>
-          <small>本月变化 ${formatSignedMoney(summary.savingsDelta)} · 安全垫 ${formatBuffer(summary.bufferAfterMonth)} 个月</small>
+          <span>现金储备</span>
+          <strong data-animate-number="${summary.savingsAfterMonth}" data-from="${summary.savingsBefore}">${formatMoney(summary.savingsAfterMonth)}</strong>
+          <small>本月 ${formatSignedMoney(summary.savingsDelta)}</small>
+          <div class="settlement-buffer-line"><span>安全垫</span><strong>${formatBuffer(summary.bufferBefore)} → ${formatBuffer(summary.bufferAfterMonth)} 个月</strong></div>
         </div>
       </div>
       ${
@@ -601,22 +822,33 @@ function showMonthlySummary() {
           ? `
             <div class="settlement-special protection-hit">
               <span>基础保障生效</span>
-              <strong>这次少花 ${formatMoney(summary.protectionReduction)}</strong>
-              <small>原本会直接扣现金储备的损失，被保障挡下了一部分。</small>
+              <div class="protection-impact-metrics">
+                <div><small>原支出</small><strong>${formatMoney(protectionOriginalLoss)}</strong></div>
+                <div><small>保障减少</small><strong>-${formatMoney(summary.protectionReduction)}</strong></div>
+                <div><small>实际支出</small><strong>${formatMoney(protectionActualLoss)}</strong></div>
+              </div>
             </div>
           `
           : ""
       }
       ${detailRowsHtml}
     </div>
-    <div class="insight">
-      <strong>本月分析</strong>
-      <span>${escapeHtml(summary.narrative)}</span>
-      <span>${escapeHtml(summary.analysis)}</span>
-      ${summary.recoveryPreview ? `<span>${escapeHtml(summary.recoveryPreview)}</span>` : ""}
-    </div>
     <div class="modal-actions">
-      <button class="button primary" data-action="end-month">进入下个月</button>
+      <button class="button primary" data-action="end-month">${continueLabel}</button>
+    </div>
+  `);
+  animateSettlementNumbers();
+}
+
+function requestEndGame() {
+  if (!player) return;
+  const completedMonths = getCompletedMonths();
+  openModal(`
+    <h2>结束本局？</h2>
+    <p>你已经完成 ${completedMonths} / ${player.maxMonth} 个月。结束后将生成阶段结果，本局不能继续。</p>
+    <div class="modal-actions">
+      <button class="button secondary" data-action="close-modal">继续游戏</button>
+      <button class="button danger" data-action="confirm-end-now">结束并查看结果</button>
     </div>
   `);
 }
@@ -625,12 +857,14 @@ function endGameNow() {
   if (!player) return;
   trackEvent("cash_game_report_requested", {
     // 记录：玩家主动查看报告，用于判断是否有人提前结束并查看结果。
-    month: player.currentMonth,
+    month: getCompletedMonths(),
     challenge_length: player.maxMonth,
   });
   player.gameEnded = true;
   player.endReason = "manual";
-  player.endedMonth = player.currentMonth;
+  player.endedMonth = getCompletedMonths();
+  player.pendingTransition = null;
+  player.pendingEchoes = [];
   saveGame();
   closeModal();
   renderResultPage();
@@ -640,18 +874,33 @@ function endMonth() {
   if (!pendingMonthlySummary) return;
   const settledSummary = pendingMonthlySummary;
   recordActualMonthStress(settledSummary);
-  player.savings = pendingMonthlySummary.savingsAfterMonth;
+  player.savings = settledSummary.savingsAfterMonth;
+  settledSummary.savingsAfterSettlement = player.savings;
+  settledSummary.bufferAfterSettlement = settledSummary.bufferAfterMonth;
   processLongTermPlans();
   const recoveryMessages = processActiveEffects();
   player.recoveryMessages = recoveryMessages;
   const scheduledEchoes = processScheduledCards();
   updateLowestSavingsAndBuffer();
+  settledSummary.followUps = scheduledEchoes.map((echo) => ({
+    id: echo.id,
+    title: echo.title,
+    effectLine: echo.effectLine,
+    savingsDelta: echo.savingsDelta || 0,
+  }));
+  settledSummary.savingsAfterMonth = player.savings;
+  settledSummary.savingsDelta = player.savings - settledSummary.savingsBefore;
+  settledSummary.bufferAfterMonth = calculateBuffer();
+  settledSummary.bufferDelta = settledSummary.bufferAfterMonth - settledSummary.bufferBefore;
+  player.completedMonths = player.currentMonth;
+  addMonthlySnapshot(settledSummary, scheduledEchoes);
   player.tempIncomeChange = 0;
   player.tempIncomePercent = 0;
   player.tempExpenseChange = 0;
   player.tempExpensePercent = 0;
   player.tempProtectionReduction = 0;
   pendingMonthlySummary = null;
+  player.pendingMonthlySummary = null;
   trackEvent("cash_game_month_settled", {
     // 记录：玩家完成一次月度结算，用于观察实际推进到第几个月。
     month: player.currentMonth,
@@ -660,21 +909,19 @@ function endMonth() {
     buffer_band_after: bufferBand(settledSummary.bufferAfterMonth),
   });
 
-  if (player.savings < 0 || player.currentMonth >= player.maxMonth) {
-    player.gameEnded = true;
-    player.endReason = player.savings < 0 ? "cash_broken" : "completed";
-    player.endedMonth = player.currentMonth;
-    saveGame();
-    closeModal();
-    renderResultPage();
-    return;
-  }
-
-  player.currentMonth += 1;
+  player.pendingEchoes = scheduledEchoes;
+  player.pendingTransition = {
+    endReason: player.savings < 0 ? "cash_broken" : player.currentMonth >= player.maxMonth ? "completed" : null,
+    nextMonth: player.currentMonth + 1,
+    recoveryMessages,
+  };
   saveGame();
   closeModal();
-  renderGamePage(nextMonthMessage(recoveryMessages));
-  maybeShowScheduledEcho(scheduledEchoes);
+  if (player.pendingEchoes.length) {
+    window.setTimeout(showNextScheduledEcho, 250);
+    return;
+  }
+  finishMonthTransition();
 }
 
 function renderHistory() {
@@ -715,17 +962,24 @@ function renderResultPage() {
   if (!player) return;
   const result = getResultType();
   const score = getSurvivalScore();
-  const grade = getResultGrade(score);
+  const grade = player.endReason === "manual" ? { grade: "阶段", label: "阶段记录" } : getResultGrade(score);
   const finalBuffer = calculateBuffer();
   const biggestStressTitle = player.biggestStressEvent?.title || "暂无";
   const biggestStressAmount = player.biggestStressEvent?.stress || 0;
   const protectionResult = getProtectionResult();
   const dcaResult = getDcaResult();
   const careerResult = getCareerCourseResult();
-  trackEvent(player.endReason === "cash_broken" ? "cash_game_failed" : "cash_game_completed", {
+  const rankLabel = player.endReason === "manual" ? "记录" : "等级";
+  const resultTrackingEvent =
+    player.endReason === "cash_broken"
+      ? "cash_game_failed"
+      : player.endReason === "manual"
+        ? "cash_game_ended_manually"
+        : "cash_game_completed";
+  trackEvent(resultTrackingEvent, {
     // 记录：一局游戏结束。只上传结果类型和安全垫区间，不上传具体分数或金额。
     end_reason: player.endReason || "completed",
-    ended_month: player.endedMonth || player.currentMonth,
+    ended_month: getCompletedMonths(),
     challenge_length: player.maxMonth,
     result_type: result.type,
     grade: grade.grade,
@@ -741,7 +995,7 @@ function renderResultPage() {
       <div class="result-hero">
         <div class="result-rank">
           <strong>${escapeHtml(grade.grade)}</strong>
-          <span>等级</span>
+          <span>${rankLabel}</span>
         </div>
         <div class="result-score-copy">
           <span class="result-type">${escapeHtml(result.type)}</span>
@@ -776,12 +1030,13 @@ function renderResultPage() {
 }
 
 function resultJourneyHtml(finalBuffer) {
-  const endedMonth = player.endedMonth || player.currentMonth;
+  const endedMonth = getCompletedMonths();
+  const endStatus = getEndStatus();
   return `
     <div class="result-card result-journey-card">
       <div class="section-title">
         <span>进程与安全垫轨迹</span>
-        <strong>第 ${endedMonth} / ${player.maxMonth} 个月 · 最终安全垫 ${formatBuffer(finalBuffer)} 个月</strong>
+        <strong>${escapeHtml(endStatus.label)} · ${endedMonth} / ${player.maxMonth} 个月 · 最终安全垫 ${formatBuffer(finalBuffer)} 个月</strong>
       </div>
       ${resultBufferCurveHtml(finalBuffer)}
     </div>
@@ -789,13 +1044,21 @@ function resultJourneyHtml(finalBuffer) {
 }
 
 function resultBufferCurveHtml(finalBuffer) {
-  const points = getResultCurvePoints([player.initialBuffer, player.lowestBuffer, finalBuffer]);
-  const path = `M ${points[0].x} ${points[0].y} C 76 ${points[0].y}, 92 ${points[1].y}, ${points[1].x} ${points[1].y} S 224 ${points[2].y}, ${points[2].x} ${points[2].y}`;
-  const areaPath = `${path} L ${points[2].x} 104 L ${points[0].x} 104 Z`;
+  const buffers = window.CashGameCore.getCurveBuffers(player.initialBuffer, player.monthlySnapshots, finalBuffer);
+  const points = getResultCurvePoints(buffers);
+  const path = getSmoothCurvePath(points);
+  const areaPath = `${path} L ${points[points.length - 1].x} 104 L ${points[0].x} 104 Z`;
+  const lowestIndex = buffers.indexOf(Math.min(...buffers));
+  const labelIndexes = [...new Set([0, lowestIndex, points.length - 1])];
   const labels = [
     { label: "开局", buffer: player.initialBuffer, savings: player.initialSavings, point: points[0] },
-    { label: "最低点", buffer: player.lowestBuffer, savings: player.lowestSavings, point: points[1] },
-    { label: "结算", buffer: finalBuffer, savings: player.savings, point: points[2] },
+    {
+      label: "最低点",
+      buffer: buffers[lowestIndex],
+      savings: lowestIndex === 0 ? player.initialSavings : player.monthlySnapshots[lowestIndex - 1]?.savingsAfterMonth,
+      point: points[lowestIndex],
+    },
+    { label: "结算", buffer: buffers[buffers.length - 1], savings: player.savings, point: points[points.length - 1] },
   ];
 
   return `
@@ -804,11 +1067,11 @@ function resultBufferCurveHtml(finalBuffer) {
         <path class="curve-grid" d="M 24 28 H 276 M 24 56 H 276 M 24 84 H 276" />
         <path class="curve-area" d="${areaPath}" />
         <path class="curve-line" d="${path}" />
-        ${labels
+        ${points
           .map(
-            (item, index) => `
-              <g class="curve-point point-${index}">
-                <circle cx="${item.point.x}" cy="${item.point.y}" r="5" />
+            (point, index) => `
+              <g class="curve-point point-${labelIndexes.includes(index) ? labelIndexes.indexOf(index) : "minor"}">
+                <circle cx="${point.x}" cy="${point.y}" r="${labelIndexes.includes(index) ? 5 : 2.5}" />
               </g>
             `,
           )
@@ -836,11 +1099,20 @@ function getResultCurvePoints(buffers) {
   const min = Math.min(...finite, 0);
   const max = Math.max(...finite, 6);
   const range = Math.max(1, max - min);
-  const xs = [28, 150, 272];
   return finite.map((value, index) => ({
-    x: xs[index],
+    x: finite.length === 1 ? 150 : 28 + (index / (finite.length - 1)) * 244,
     y: Math.round(92 - ((value - min) / range) * 64),
   }));
+}
+
+function getSmoothCurvePath(points) {
+  if (!points.length) return "";
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+  return points.slice(1).reduce((path, point, index) => {
+    const previous = points[index];
+    const controlOffset = (point.x - previous.x) / 2;
+    return `${path} C ${previous.x + controlOffset} ${previous.y}, ${point.x - controlOffset} ${point.y}, ${point.x} ${point.y}`;
+  }, `M ${points[0].x} ${points[0].y}`);
 }
 
 function getBiggestStressExplanation(title, stressAmount) {
@@ -1003,7 +1275,7 @@ function getCareerCourseResult() {
   }
   if (!scheduled) return null;
   if (!scheduled.triggered) {
-    const endedMonth = player.endedMonth || player.currentMonth;
+    const endedMonth = getCompletedMonths();
     const remaining = Math.max(1, scheduled.triggerMonth - endedMonth);
     return {
       label: "课程还没到兑现期",
@@ -1116,12 +1388,16 @@ function handleDcaMarketChoice(choice, stage) {
 function startGame(identity, maxMonth = selectedMaxMonth) {
   const initialBuffer = getBuffer(identity.savings, identity.expense);
   const normalizedMaxMonth = challengeLengths.includes(Number(maxMonth)) ? Number(maxMonth) : selectedMaxMonth;
+  const debugStartMonth = debugMode ? Math.max(1, Math.min(normalizedMaxMonth, Number(debugParams.get("month")) || 1)) : 1;
   player = {
+    stateVersion: GAME_STATE_VERSION,
+    identityId: identity.id || "custom",
     identityName: identity.name,
     baseIncome: Number(identity.income) || 0,
     baseExpense: Number(identity.expense) || 0,
     savings: Number(identity.savings) || 0,
-    currentMonth: 1,
+    currentMonth: debugStartMonth,
+    completedMonths: debugStartMonth - 1,
     maxMonth: normalizedMaxMonth,
     position: 0,
     initialSavings: Number(identity.savings) || 0,
@@ -1139,6 +1415,10 @@ function startGame(identity, maxMonth = selectedMaxMonth) {
     activeEffects: [],
     longTermPlans: [],
     scheduledCards: [],
+    pendingEchoes: [],
+    pendingTransition: null,
+    pendingMonthlySummary: null,
+    monthlySnapshots: [],
     eventDrawHistory: [],
     recoveryMessages: [],
     tempProtectionReduction: 0,
@@ -1146,6 +1426,9 @@ function startGame(identity, maxMonth = selectedMaxMonth) {
     endedMonth: null,
     history: [],
     gameEnded: false,
+    randomState: debugMode ? debugRandomState : null,
+    debugSeed: debugMode ? debugSeedText : null,
+    startedAt: Date.now(),
   };
   lastDice = null;
   pendingMonthlySummary = null;
@@ -1159,6 +1442,7 @@ function startGame(identity, maxMonth = selectedMaxMonth) {
     initial_buffer_band: bufferBand(initialBuffer),
   });
   renderGamePage();
+  window.setTimeout(maybeStartOnboarding, 380);
 }
 
 function applyEffect(effect, event = null) {
@@ -1220,7 +1504,7 @@ function applyEffect(effect, event = null) {
   if (effect.type === "add_uncertain_active_effect") {
     player.activeEffects.push({
       id: generateId("uncertain"),
-      name: "公司业务调整",
+      name: event?.title || "不确定收入变化",
       target: effect.target,
       amount: effect.amount,
       remainingMonths: null,
@@ -1288,7 +1572,6 @@ function applyEffect(effect, event = null) {
       recoveryMonth: getDcaRecoveryMonth(),
       overvaluedMonth: null,
       pauseCount: 0,
-      redeemed: false,
       recoveryTriggered: false,
       overvaluedTriggered: false,
       lastAction: null,
@@ -1382,8 +1665,15 @@ function buildMonthlySummary(event, choice, before, afterEffect) {
   const tempExpenseDelta = currentExpense - recurringExpense;
   const reserveDelta = afterEffect.savings - before.savings;
   const protectionReduction = player.tempProtectionReduction || 0;
-  const monthlyNetCashflow = currentIncome - currentExpense;
-  const savingsAfterMonth = player.savings + monthlyNetCashflow;
+  const settlement = window.CashGameCore.calculateSettlement({
+    savingsAfterEffects: player.savings,
+    recurringIncome,
+    recurringExpense,
+    tempIncomeDelta,
+    tempExpenseDelta,
+  });
+  const monthlyNetCashflow = settlement.monthlyNetCashflow;
+  const savingsAfterMonth = settlement.savingsAfterMonth;
   const savingsDelta = savingsAfterMonth - before.savings;
   const bufferAfterMonth = getBuffer(savingsAfterMonth, recurringExpense);
   const beforeBuffer = before.buffer;
@@ -1392,8 +1682,12 @@ function buildMonthlySummary(event, choice, before, afterEffect) {
   const bufferDelta = afterBuffer - beforeBuffer;
 
   return {
+    month: player.currentMonth,
+    eventId: event.id,
     eventTitle: event.title,
+    category: event.category,
     choiceLabel: choice ? choice.label : null,
+    savingsBefore: before.savings,
     bufferBefore: beforeBuffer,
     recurringIncome,
     recurringExpense,
@@ -1405,8 +1699,10 @@ function buildMonthlySummary(event, choice, before, afterEffect) {
     protectionReduction,
     monthlyNetCashflow,
     savingsAfterMonth,
+    savingsAfterSettlement: savingsAfterMonth,
     savingsDelta,
     bufferAfterMonth,
+    bufferAfterSettlement: bufferAfterMonth,
     bufferDelta,
     roundLabel: getRoundLabel(monthlyNetCashflow, beforeBuffer, afterBuffer),
     narrative: `这个月你${direction}，安全垫从 ${formatBuffer(beforeBuffer)} 个月变成了 ${formatBuffer(afterBuffer)} 个月。`,
@@ -1495,13 +1791,13 @@ function processActiveEffects() {
   player.activeEffects = player.activeEffects
     .map((effect) => {
       if (!effect.uncertain) {
-        return { ...effect, remainingMonths: effect.remainingMonths - 1 };
+        return { ...effect, remainingMonths: window.CashGameCore.tickDuration(effect.remainingMonths) };
       }
 
       const elapsedMonths = (effect.elapsedMonths || 0) + 1;
       const canRecover = elapsedMonths >= effect.minMonths;
       const forcedRecovery = elapsedMonths >= effect.maxMonths;
-      const recovered = canRecover && (forcedRecovery || Math.random() < effect.recoveryChance);
+      const recovered = canRecover && (forcedRecovery || randomFloat() < effect.recoveryChance);
 
       if (recovered) {
         recoveryMessages.push(effect.recoveryText);
@@ -1521,12 +1817,12 @@ function processActiveEffects() {
 
 function processScheduledCards() {
   const echoes = [];
-  player.scheduledCards.forEach((card) => {
-    if (!card.triggered && card.triggerMonth <= player.currentMonth) {
-      card.triggered = true;
-      const echo = resolveScheduledCard(card);
-      if (echo) echoes.push(echo);
-    }
+  const dueCards = window.CashGameCore.getDueScheduledCards(player.scheduledCards, player.currentMonth);
+  dueCards.forEach((card) => {
+    card.triggered = true;
+    card.resolvedMonth = player.currentMonth;
+    const echo = resolveScheduledCard(card);
+    if (echo) echoes.push(echo);
   });
   return echoes;
 }
@@ -1543,9 +1839,13 @@ function resolveScheduledCard(card) {
     });
 
     return {
+      id: card.id,
       title: card.title,
       message: card.message,
       effectLine: `${card.activeEffect.target === "expense" ? "常规月支出" : "常规月收入"} ${formatSignedMoney(card.activeEffect.amount)}${durationSuffix(card.activeEffect.duration)}。`,
+      savingsDelta: 0,
+      savingsAfter: player.savings,
+      bufferAfter: calculateBuffer(),
     };
   }
 
@@ -1554,14 +1854,18 @@ function resolveScheduledCard(card) {
     recordStress(card.title || "后续事件", Math.max(0, -(card.amount || 0)), "次");
 
     return {
+      id: card.id,
       title: card.title,
       message: card.message,
       effectLine: `现金储备 ${formatSignedMoney(card.amount)}。`,
+      savingsDelta: card.amount || 0,
+      savingsAfter: player.savings,
+      bufferAfter: calculateBuffer(),
     };
   }
 
   if (card.id !== "career_course_echo") return null;
-  const success = Math.random() < 0.7;
+  const success = randomFloat() < 0.7;
 
   if (success) {
     card.outcome = "success";
@@ -1576,23 +1880,35 @@ function resolveScheduledCard(card) {
     });
 
     return {
+      id: card.id,
       title: "课程开始回本",
       message: "之前报名的职业提升课程帮你拿到了更好的项目机会。",
       effectLine: "常规月收入 +1,500 元，持续 12 个月。",
+      savingsDelta: 0,
+      savingsAfter: player.savings,
+      bufferAfter: calculateBuffer(),
     };
   }
 
   card.outcome = "neutral";
   return {
+    id: card.id,
     title: "课程还在发酵",
     message: "课程没有立刻带来收入变化，但你补上了一块能力短板。",
     effectLine: "本月现金流暂时不变。",
+    savingsDelta: 0,
+    savingsAfter: player.savings,
+    bufferAfter: calculateBuffer(),
   };
 }
 
-function maybeShowScheduledEcho(echoes = []) {
-  if (!echoes.length) return;
-  window.setTimeout(() => renderScheduledEchoCard(echoes[0]), 350);
+function showNextScheduledEcho() {
+  const echo = player?.pendingEchoes?.[0];
+  if (!echo) {
+    finishMonthTransition();
+    return;
+  }
+  renderScheduledEchoCard(echo);
 }
 
 function renderScheduledEchoCard(echo) {
@@ -1604,9 +1920,47 @@ function renderScheduledEchoCard(echo) {
       <span>${escapeHtml(echo.effectLine)}</span>
     </div>
     <div class="modal-actions">
-      <button class="button primary" data-action="close-modal">继续前进</button>
+      <button class="button primary" data-action="continue-echo">继续前进</button>
     </div>
   `);
+}
+
+function continueScheduledEcho() {
+  if (!player?.pendingEchoes?.length) {
+    closeModal();
+    finishMonthTransition();
+    return;
+  }
+  player.pendingEchoes.shift();
+  saveGame();
+  closeModal();
+  if (player.pendingEchoes.length) {
+    window.setTimeout(showNextScheduledEcho, 120);
+    return;
+  }
+  finishMonthTransition();
+}
+
+function finishMonthTransition() {
+  const transition = player?.pendingTransition;
+  if (!player || !transition) return;
+  player.pendingTransition = null;
+  player.pendingEchoes = [];
+
+  if (transition.endReason) {
+    player.gameEnded = true;
+    player.endReason = transition.endReason;
+    player.endedMonth = getCompletedMonths();
+    saveGame();
+    closeModal();
+    renderResultPage();
+    return;
+  }
+
+  player.currentMonth = transition.nextMonth;
+  saveGame();
+  closeModal();
+  renderGamePage(nextMonthMessage(transition.recoveryMessages || []));
 }
 
 function scheduleCarFollowUps() {
@@ -1655,7 +2009,7 @@ function scheduleCarFollowUps() {
 
 function maybeTriggerDcaMarketEvent() {
   const plan = getDcaPlan();
-  if (!plan || ["redeemed", "sold_all"].includes(plan.status)) return;
+  if (!plan || plan.status === "sold_all") return;
   if (getDcaHoldingPrincipal(plan) <= 0) return;
 
   if (!plan.recoveryTriggered && player.currentMonth >= (plan.recoveryMonth || player.maxMonth)) {
@@ -1732,23 +2086,46 @@ function recordStress(title, amount, unit = "次") {
   }
 }
 
-function addToHistory(event, choice, afterEffect) {
-  const protectionReduction = player.tempProtectionReduction || 0;
+function addMonthlySnapshot(summary, scheduledEchoes = []) {
+  const snapshot = {
+    ...summary,
+    month: player.currentMonth,
+    completedAt: Date.now(),
+  };
+  player.monthlySnapshots = player.monthlySnapshots || [];
+  player.monthlySnapshots.push(snapshot);
+
   player.history.push({
     month: player.currentMonth,
-    eventTitle: event.title,
-    category: event.category,
-    choice: choice ? choice.label : null,
-    protectionReduction,
-    savingsAfter: afterEffect.savings,
-    bufferAfter: afterEffect.buffer,
+    entryType: "event",
+    eventTitle: summary.eventTitle,
+    category: summary.category,
+    choice: summary.choiceLabel,
+    protectionReduction: summary.protectionReduction || 0,
+    savingsAfter: summary.savingsAfterSettlement,
+    bufferAfter: summary.bufferAfterSettlement,
+  });
+
+  scheduledEchoes.forEach((echo) => {
+    player.history.push({
+      month: player.currentMonth,
+      entryType: "follow_up",
+      eventTitle: echo.title,
+      category: "follow_up",
+      choice: null,
+      protectionReduction: 0,
+      savingsAfter: echo.savingsAfter,
+      bufferAfter: echo.bufferAfter,
+      effectLine: echo.effectLine,
+    });
   });
 }
 
 function getHistorySummary(item) {
   const parts = [];
+  if (item.entryType === "follow_up") parts.push(item.effectLine || "后续影响已生效");
   if (item.choice) parts.push(`选择：${item.choice}`);
-  else parts.push(categoryLabel(item.category));
+  else if (item.entryType !== "follow_up") parts.push(categoryLabel(item.category));
   if (item.protectionReduction) parts.push(`保障少花 ${formatMoney(item.protectionReduction)}`);
   if (item.bufferAfter < 1) parts.push("安全垫进入高压区");
   return parts.join(" · ");
@@ -1758,6 +2135,7 @@ function getHistoryTone(item) {
   if (item.protectionReduction) return "is-protected";
   if (item.bufferAfter < 1) return "is-danger";
   if (item.choice) return "is-choice";
+  if (item.entryType === "follow_up") return "is-choice";
   if (item.category === "positive") return "is-good";
   return "";
 }
@@ -1841,7 +2219,7 @@ function getEventMaxCount(event) {
 function weightedRandomItem(items) {
   if (!items.length) return randomItem(eventCards);
   const total = items.reduce((sum, item) => sum + (item.weight || getDefaultWeight(item)), 0);
-  let roll = Math.random() * total;
+  let roll = randomFloat() * total;
 
   for (const item of items) {
     roll -= item.weight || getDefaultWeight(item);
@@ -1866,6 +2244,11 @@ function hasActiveEvent(eventId) {
 }
 
 function getEventForCurrentPosition() {
+  if (debugMode && debugForcedEventId) {
+    const forcedEvent = eventCards.find((event) => event.id === debugForcedEventId);
+    debugForcedEventId = null;
+    if (forcedEvent) return forcedEvent;
+  }
   const cell = mapCells[player.position];
   const earlyDcaEvent = getEarlyDcaEvent();
   if (earlyDcaEvent && player.currentMonth === Math.min(10, player.maxMonth)) return earlyDcaEvent;
@@ -1881,7 +2264,7 @@ function getEventForCurrentPosition() {
     if (!isDcaEventAllowed(event)) return false;
     return isEventAllowedByFrequency(event) && !hasActiveEvent(event.id);
   });
-  if (earlyDcaEvent && player.currentMonth >= 6 && Math.random() < 0.35) return earlyDcaEvent;
+  if (earlyDcaEvent && player.currentMonth >= 6 && randomFloat() < 0.35) return earlyDcaEvent;
   return weightedRandomItem(cooledPool.length ? cooledPool : eligiblePool.length ? eligiblePool : fallbackPool);
 }
 
@@ -1931,10 +2314,6 @@ function getSettlementVerdict(summary) {
   return { className: "stable", title: "平稳通过", text: "现金流没有出现明显恶化。" };
 }
 
-function getBufferShiftWidth(buffer) {
-  return Math.max(4, Math.min(100, (Math.max(0, buffer) / 6) * 100));
-}
-
 function getUncertainEffectHint() {
   const uncertainEffects = player.activeEffects.filter((effect) => effect.uncertain);
   if (!uncertainEffects.length) return "";
@@ -1943,7 +2322,7 @@ function getUncertainEffectHint() {
 }
 
 function getEndStatus() {
-  const endedMonth = player.endedMonth || player.currentMonth;
+  const endedMonth = getCompletedMonths();
   if (player.endReason === "cash_broken") {
     return {
       label: "提前击穿",
@@ -2102,11 +2481,10 @@ function categoryGlyph(category) {
 
 function getSurvivalScore() {
   const finalBuffer = calculateBuffer();
-  const monthScore = ((player.endedMonth || player.currentMonth) / player.maxMonth) * 45;
+  const monthScore = (getCompletedMonths() / player.maxMonth) * 45;
   const bufferScore = Math.max(0, Math.min(35, finalBuffer * 6));
   const savingsScore = player.savings > 0 ? 15 : 0;
-  const planPenalty = getDcaPlan()?.status === "redeemed" ? -5 : 0;
-  return Math.round(Math.max(0, Math.min(100, monthScore + bufferScore + savingsScore + planPenalty + 5)));
+  return Math.round(Math.max(0, Math.min(100, monthScore + bufferScore + savingsScore + 5)));
 }
 
 function getResultGrade(score) {
@@ -2123,7 +2501,16 @@ function getResultType() {
   const incomeHigh = player.baseIncome >= 30000;
   const bufferDrop = player.initialBuffer - finalBuffer;
 
-  if (dcaPlan && ["paused", "redeemed"].includes(dcaPlan.status)) {
+  if (player.endReason === "manual") {
+    return {
+      type: "主动结束",
+      headline: "这是一份阶段记录",
+      summary: `你完成了 ${getCompletedMonths()} / ${player.maxMonth} 个月，本页仅呈现当前阶段结果。`,
+      oneLine: "本局未完成全部挑战。",
+    };
+  }
+
+  if (dcaPlan && dcaPlan.status === "paused") {
     return {
       type: "长期计划被打断型",
       headline: "现金流没撑到长期结果出现",
@@ -2198,12 +2585,19 @@ function loadSavedGame(apply = true) {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw);
+    const parsed = window.CashGameCore.migratePlayerState(JSON.parse(raw));
     if (!parsed || typeof parsed !== "object" || !Number.isFinite(parsed.baseExpense)) {
       clearSavedGame();
       return null;
     }
-    if (apply) player = parsed;
+    if (apply) {
+      player = parsed;
+      pendingMonthlySummary = player.pendingMonthlySummary || null;
+      if (debugMode && Number.isFinite(player.randomState)) {
+        debugRandomState = player.randomState;
+        debugSeedText = player.debugSeed || debugSeedText;
+      }
+    }
     return parsed;
   } catch {
     clearSavedGame();
@@ -2228,12 +2622,18 @@ function captureMonthState() {
   };
 }
 
+function getCompletedMonths() {
+  if (!player) return 0;
+  if (Number.isFinite(player.completedMonths)) return Math.max(0, player.completedMonths);
+  return Math.max(0, (player.currentMonth || 1) - 1);
+}
+
 function getDcaPlan() {
   return player?.longTermPlans?.find((plan) => plan.id === "index_dca_001");
 }
 
 function shouldShowDcaPlanCard(plan) {
-  if (!plan || ["sold_all", "redeemed"].includes(plan.status)) return false;
+  if (!plan || plan.status === "sold_all") return false;
   return getDcaHoldingPrincipal(plan) > 0 || plan.status === "active";
 }
 
@@ -2261,7 +2661,7 @@ function getDcaCurrentReturnRate(plan) {
   if (!plan) return 0;
   if (Number.isFinite(plan.currentReturnRate)) return plan.currentReturnRate;
 
-  const endedMonth = player.endedMonth || player.currentMonth;
+  const endedMonth = getCompletedMonths();
   const heldMonths = Math.max(1, endedMonth - (plan.startMonth || 1) + 1);
   const scenarioIndex = Math.abs(Math.round((plan.startMonth || 1) * 17 + heldMonths * 11 + player.initialSavings / 1000)) % 3;
   return [-0.02, 0.06, 0.18][scenarioIndex];
@@ -2306,13 +2706,13 @@ function getDcaMarketState(stage, plan = null) {
 
 function sellDcaHolding(plan, ratio, returnRate) {
   const holdingPrincipal = getDcaHoldingPrincipal(plan);
-  const soldPrincipal = Math.min(holdingPrincipal, Math.round(holdingPrincipal * ratio));
-  const soldAmount = Math.max(0, Math.round(soldPrincipal * (1 + returnRate)));
+  const sale = window.CashGameCore.calculateDcaSale(holdingPrincipal, ratio, returnRate);
+  const { soldPrincipal, soldAmount } = sale;
 
-  plan.holdingPrincipal = Math.max(0, holdingPrincipal - soldPrincipal);
+  plan.holdingPrincipal = sale.remainingPrincipal;
   plan.soldPrincipal = (plan.soldPrincipal || 0) + soldPrincipal;
   plan.realizedAmount = (plan.realizedAmount || 0) + soldAmount;
-  plan.realizedProfit = (plan.realizedProfit || 0) + soldAmount - soldPrincipal;
+  plan.realizedProfit = (plan.realizedProfit || 0) + sale.realizedProfit;
   plan.lastSoldAmount = soldAmount;
   player.savings += soldAmount;
   removeDcaMonthlyEffect();
@@ -2320,7 +2720,6 @@ function sellDcaHolding(plan, ratio, returnRate) {
   if (plan.holdingPrincipal <= 0) {
     plan.holdingPrincipal = 0;
     plan.status = "sold_all";
-    plan.redeemed = true;
   } else {
     plan.status = "paused";
     plan.pauseCount = (plan.pauseCount || 0) + 1;
@@ -2407,18 +2806,13 @@ function removeProtectionMonthlyEffect() {
 }
 
 function applyProtectionToSavingsChange(amount, event) {
-  if (amount >= 0) return amount;
   const plan = getProtectionPlan();
-  if (!plan || !isProtectionEligibleEvent(event)) return amount;
-
-  const rawReduction = Math.round(Math.abs(amount) * plan.coverageRate);
-  const remainingCoverage = Math.max(0, plan.maxReduction - (plan.totalReduced || 0));
-  const reduction = Math.min(rawReduction, remainingCoverage);
-  if (reduction <= 0) return amount;
-
-  plan.totalReduced = (plan.totalReduced || 0) + reduction;
+  const result = window.CashGameCore.calculateProtectionChange(amount, plan, isProtectionEligibleEvent(event));
+  if (!plan || result.reduction <= 0) return result.adjustedAmount;
+  plan.totalReduced = result.totalReduced;
+  const reduction = result.reduction;
   player.tempProtectionReduction = (player.tempProtectionReduction || 0) + reduction;
-  return amount + reduction;
+  return result.adjustedAmount;
 }
 
 function isProtectionEligibleEvent(event) {
@@ -2438,6 +2832,8 @@ function getProtectionPreview(event, effect) {
   return {
     coverageRate: plan.coverageRate,
     reduction,
+    originalLoss: loss,
+    actualLoss: loss - reduction,
   };
 }
 
@@ -2459,11 +2855,6 @@ function getBufferStatus(buffer) {
   if (buffer < 3) return { className: "buffer-fragile", text: "脆弱区" };
   if (buffer < 6) return { className: "buffer-ok", text: "缓冲区" };
   return { className: "buffer-safe", text: "安全区" };
-}
-
-function bufferPill(buffer) {
-  const status = getBufferStatus(buffer);
-  return `<span class="buffer-pill ${status.className}">安全垫 ${formatBuffer(buffer)} 个月 · ${status.text}</span>`;
 }
 
 function effectText(effect) {
@@ -2618,7 +3009,6 @@ function applyInvestOrReserve(amount, investPercent = 0.5) {
 function planStatusText(status) {
   if (status === "active") return "进行中";
   if (status === "paused") return "已暂停";
-  if (status === "redeemed") return "已赎回";
   if (status === "sold_all") return "已卖出";
   if (status === "expired") return "已到期";
   return "未开始";
@@ -2653,16 +3043,52 @@ function formatPercent(value) {
   return `${percent > 0 ? "+" : ""}${percent}%`;
 }
 
+function prefersReducedMotion() {
+  return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function animateSettlementNumbers() {
+  if (prefersReducedMotion()) return;
+  document.querySelectorAll(".modal [data-animate-number]").forEach((element) => {
+    const target = Number(element.dataset.animateNumber);
+    const from = Number(element.dataset.from || 0);
+    const signed = element.dataset.signed === "true";
+    if (!Number.isFinite(target) || !Number.isFinite(from)) return;
+    const startedAt = Date.now();
+    const duration = 620;
+
+    const update = () => {
+      const progress = Math.min(1, (Date.now() - startedAt) / duration);
+      const eased = 1 - (1 - progress) ** 3;
+      const current = Math.round(from + (target - from) * eased);
+      element.textContent = signed ? formatSignedMoney(current) : formatMoney(current);
+      if (progress < 1) window.requestAnimationFrame(update);
+    };
+
+    element.textContent = signed ? formatSignedMoney(from) : formatMoney(from);
+    window.requestAnimationFrame(update);
+  });
+}
+
 function randomInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+  return Math.floor(randomFloat() * (max - min + 1)) + min;
 }
 
 function randomItem(items) {
-  return items[Math.floor(Math.random() * items.length)];
+  return items[Math.floor(randomFloat() * items.length)];
 }
 
 function generateId(prefix) {
-  return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  return `${prefix}_${player?.currentMonth || 0}_${Math.floor(randomFloat() * 0xffffffff).toString(16)}`;
+}
+
+function randomFloat() {
+  if (!debugMode) return Math.random();
+  const currentState = Number.isFinite(player?.randomState) ? player.randomState : debugRandomState;
+  const next = window.CashGameCore.nextSeededRandom(currentState);
+  debugRandomState = next.state;
+  if (player) player.randomState = next.state;
+  return next.value;
 }
 
 function escapeHtml(value) {
@@ -2684,6 +3110,17 @@ function openModal(html) {
 
 function closeModal() {
   document.querySelectorAll(".modal-backdrop").forEach((node) => node.remove());
+}
+
+function resolveChoiceFromButton(button) {
+  if (!button || button.classList.contains("is-selected")) return;
+  const list = button.closest(".choice-list");
+  list?.querySelectorAll(".choice-button").forEach((item) => {
+    item.disabled = true;
+  });
+  button.classList.add("is-selected");
+  const delay = prefersReducedMotion() ? 0 : 170;
+  window.setTimeout(() => confirmEvent(button.dataset.eventId, button.dataset.choiceIndex), delay);
 }
 
 function showToast(message) {
@@ -2729,6 +3166,24 @@ function validateCustomForm(form) {
     savings,
     maxMonth,
   };
+}
+
+function resumeLoadedGame() {
+  lastDice = null;
+  if (player.gameEnded) {
+    renderResultPage();
+    return;
+  }
+  renderGamePage("已继续上次游戏。", { skipEcho: true });
+  if (pendingMonthlySummary) {
+    window.setTimeout(showMonthlySummary, 120);
+    return;
+  }
+  if (player.pendingEchoes?.length) {
+    window.setTimeout(showNextScheduledEcho, 120);
+    return;
+  }
+  if (player.pendingTransition) finishMonthTransition();
 }
 
 document.addEventListener("click", (event) => {
@@ -2785,13 +3240,12 @@ document.addEventListener("click", (event) => {
 
   if (action === "continue") {
     if (loadSavedGame(true)) {
-      lastDice = null;
       trackEvent("cash_game_resumed", {
         // 记录：玩家继续上次游戏，用于观察存档入口是否有用。
         month: player.currentMonth,
         challenge_length: player.maxMonth,
       });
-      renderGamePage("已继续上次游戏。");
+      resumeLoadedGame();
     } else {
       savedGameAvailable = false;
       renderHome();
@@ -2799,31 +3253,42 @@ document.addEventListener("click", (event) => {
   }
 
   if (action === "restart") {
-    trackEvent("cash_game_restarted", {
-      // 记录：玩家重新开始，用于观察中途放弃或结果页重玩的情况。
-      from_month: player?.currentMonth || null,
-      had_active_game: Boolean(player && !player.gameEnded),
-    });
-    clearSavedGame();
-    savedGameAvailable = false;
-    player = null;
-    lastDice = null;
-    pendingMonthlySummary = null;
-    closeModal();
-    renderHome();
+    restartGame();
   }
 
   if (action === "roll") rollDice();
 
   if (action === "confirm-event") confirmEvent(target.dataset.eventId);
 
-  if (action === "choose-event") confirmEvent(target.dataset.eventId, target.dataset.choiceIndex);
+  if (action === "choose-event") resolveChoiceFromButton(target);
 
   if (action === "end-month") endMonth();
 
   if (action === "history") renderHistory();
 
-  if (action === "end-now") endGameNow();
+  if (action === "game-menu") renderGameMenu();
+
+  if (action === "debug-panel") renderDebugPanel();
+
+  if (action === "debug-copy") copyDebugDiagnostic();
+
+  if (action === "debug-reset-onboarding") resetDebugOnboarding();
+
+  if (action === "show-rules") startOnboarding(true);
+
+  if (action === "request-restart") requestRestart();
+
+  if (action === "confirm-restart") restartGame();
+
+  if (action === "next-onboarding") nextOnboardingStep();
+
+  if (action === "skip-onboarding") finishOnboarding("skipped");
+
+  if (action === "end-now") requestEndGame();
+
+  if (action === "confirm-end-now") endGameNow();
+
+  if (action === "continue-echo") continueScheduledEcho();
 
   if (action === "close-modal") closeModal();
 
@@ -2831,10 +3296,76 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("submit", (event) => {
+  if (event.target.id === "debugStateForm") {
+    event.preventDefault();
+    if (!debugMode || !player) return;
+    const seed = String(event.target.seed.value || "cash-game-debug").trim() || "cash-game-debug";
+    const month = Math.max(1, Math.min(player.maxMonth, Number(event.target.month.value) || 1));
+    const savings = Number(event.target.savings.value);
+    debugSeedText = seed;
+    debugRandomState = window.CashGameCore.normalizeSeed(seed);
+    player.randomState = debugRandomState;
+    player.debugSeed = seed;
+    player.currentMonth = month;
+    player.completedMonths = Math.max(0, month - 1);
+    if (Number.isFinite(savings)) player.savings = savings;
+    updateLowestSavingsAndBuffer();
+    saveGame();
+    closeModal();
+    renderGamePage("测试状态已应用。", { skipEcho: true });
+    showToast("测试状态已应用。");
+    return;
+  }
+
+  if (event.target.id === "debugEventForm") {
+    event.preventDefault();
+    if (!debugMode) return;
+    const eventId = String(event.target.eventId.value || "");
+    if (!eventCards.some((card) => card.id === eventId)) return;
+    debugForcedEventId = eventId;
+    closeModal();
+    renderGamePage("下一张测试卡已指定，掷骰后触发。", { skipEcho: true });
+    showToast("下一张测试卡已指定。");
+    return;
+  }
+
   if (event.target.id !== "customForm") return;
   event.preventDefault();
   const identity = validateCustomForm(event.target);
   if (identity) startGame(identity, identity.maxMonth);
 });
+
+if (debugMode) {
+  window.CashGameDebug = {
+    forceNextEvent(eventId) {
+      debugForcedEventId = eventId;
+    },
+    setSeed(seed) {
+      debugSeedText = String(seed || "cash-game-debug");
+      debugRandomState = window.CashGameCore.normalizeSeed(debugSeedText);
+      if (player) player.randomState = debugRandomState;
+    },
+    setMonth(month) {
+      if (!player) return;
+      player.currentMonth = Math.max(1, Math.min(player.maxMonth, Number(month) || 1));
+      player.completedMonths = Math.max(0, player.currentMonth - 1);
+      saveGame();
+      renderGamePage("测试月份已更新。", { skipEcho: true });
+    },
+    setSavings(amount) {
+      if (!player) return;
+      player.savings = Number(amount) || 0;
+      updateLowestSavingsAndBuffer();
+      saveGame();
+      renderGamePage("测试现金储备已更新。", { skipEcho: true });
+    },
+    getState() {
+      return JSON.parse(JSON.stringify(player));
+    },
+    getDiagnostic() {
+      return getDebugDiagnostic();
+    },
+  };
+}
 
 init();

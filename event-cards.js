@@ -307,7 +307,7 @@ var eventCards = [
     category: "positive",
     description: "你主动控制消费，本月支出减少约 12%。",
     effect: { type: "one_month_expense_percent", amount: -0.12 },
-    insight: "少花的 3000 元不会发光，但它会安静地把安全垫垫高一点。",
+    insight: "本月支出减少约 12%。",
   },
   {
     id: "tax_refund",
@@ -766,3 +766,5 @@ var eventCards = [
     insight: "储备计划选择已经记录。",
   },
 ];
+
+if (typeof module !== "undefined" && module.exports) module.exports = eventCards;
