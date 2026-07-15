@@ -234,6 +234,7 @@ function renderGamePage(message = "", options = {}) {
   const protectionPlan = getProtectionPlan();
   const temporaryExpenseEffects = getTemporaryExpenseEffects();
   const pendingStatuses = getPendingScheduledStatuses();
+  const currentMapPoint = getJourneyPoint(0);
   const moveBannerHtml = mapMotion
     ? `
       <div class="move-banner">
@@ -319,32 +320,27 @@ function renderGamePage(message = "", options = {}) {
         <div class="map-title">
           <div>
             <span>${escapeHtml(player.identityName)}的人生地图</span>
-            <small>路在往前延伸，事件停下后才揭晓</small>
           </div>
         </div>
-        ${message ? `<div class="turn-cue" role="status" aria-live="polite">${escapeHtml(message)}</div>` : ""}
-        <div class="journey-map ${mapMotion ? "is-moving" : ""}" style="${mapMotion ? `--drift-x:${mapMotion.driftX}px; --drift-y:${mapMotion.driftY}px;` : ""}">
+        <div class="journey-map map-canvas ${mapMotion ? "is-moving" : ""}" style="${mapMotion ? `--drift-x:${mapMotion.driftX}px; --drift-y:${mapMotion.driftY}px;` : ""}">
+          <img class="life-map-background" src="assets/life-map-paper.png" alt="" aria-hidden="true" decoding="async" />
           ${moveBannerHtml}
-          <div class="map-depth" aria-hidden="true">
-            <span></span>
-            <span></span>
-            <span></span>
-          </div>
           <div class="map-card-stack" aria-hidden="true">
             <i></i>
             <i></i>
             <i></i>
           </div>
           <div class="journey-world">
-            <svg class="journey-road" viewBox="0 0 620 260" aria-hidden="true">
-              <path class="road-shadow" d="M20 218 C105 166 122 220 202 158 S326 72 418 112 S512 154 600 30" />
-              <path class="road-base" d="M20 218 C105 166 122 220 202 158 S326 72 418 112 S512 154 600 30" />
-              <path class="road-dash" d="M20 218 C105 166 122 220 202 158 S326 72 418 112 S512 154 600 30" />
+            <svg class="life-map-path-layer" viewBox="0 0 1000 620" preserveAspectRatio="none" aria-hidden="true">
+              <path class="map-path-shadow" d="M -80 470 C 120 430, 220 510, 370 400 S 610 250, 760 350 S 930 380, 1080 250" />
+              <path class="map-path-main" d="M -80 470 C 120 430, 220 510, 370 400 S 610 250, 760 350 S 930 380, 1080 250" />
+              <path class="map-path-dashed" d="M -80 470 C 120 430, 220 510, 370 400 S 610 250, 760 350 S 930 380, 1080 250" />
             </svg>
             ${journeyNodesHtml()}
           </div>
-          <div class="player-token" aria-label="当前位置">
-            <span></span>
+          <div class="player-token" style="--player-x:${currentMapPoint.x}%; --player-y:${currentMapPoint.y}%;" aria-label="当前位置">
+            <b class="player-month-label">第 ${player.currentMonth} 个月</b>
+            <img src="assets/life-map-player.png" alt="" aria-hidden="true" decoding="async" />
           </div>
         </div>
       </div>
@@ -373,9 +369,11 @@ function rollDice() {
     first_roll_seconds:
       getCompletedMonths() === 0 && player.startedAt ? Math.max(0, Math.round((Date.now() - player.startedAt) / 1000)) : null,
   });
+  const currentPoint = getJourneyPoint(0);
+  const previousPoint = getJourneyPoint(-lastDice);
   mapMotion = {
-    driftX: -lastDice * 34,
-    driftY: lastDice * 18,
+    driftX: (previousPoint.x - currentPoint.x) * 3.12,
+    driftY: (previousPoint.y - currentPoint.y) * 3.48,
   };
   player.position = (player.position + lastDice) % mapCells.length;
   const event = getEventForCurrentPosition();
@@ -2359,8 +2357,14 @@ function getCellIcon(type) {
   return icons[type] || "格";
 }
 
+const JOURNEY_NODE_GAP = 42;
+const JOURNEY_ROUTE_SAMPLE_COUNT = 360;
+const JOURNEY_ROUTE_REFERENCE_WIDTH = 312;
+const JOURNEY_ROUTE_REFERENCE_HEIGHT = 348;
+let journeyRouteMetricsCache = null;
+
 function journeyNodesHtml() {
-  const offsets = [-6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+  const offsets = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5];
 
   return offsets
     .map((offset) => {
@@ -2370,46 +2374,93 @@ function journeyNodesHtml() {
       const depth = Math.abs(offset);
       const point = getJourneyPoint(offset);
       const tone = getNodeTone(wrappedIndex);
+      const isKey = isCurrent || Math.abs(offset) % 3 === 0;
 
       return `
         <span
-          class="journey-node tone-${tone} ${isCurrent ? "current" : ""} ${isPast ? "past" : "future"}"
-          style="--x:${point.x}px; --y:${point.y}px; --scale:${Math.max(0.62, 1 - depth * 0.035)};"
+          class="journey-node tone-${tone} ${isKey ? "is-key" : ""} ${isCurrent ? "current" : ""} ${isPast ? "past" : "future"}"
+          style="--x:${point.x}%; --y:${point.y}%; --scale:${Math.max(0.78, 1 - depth * 0.025)};"
           aria-label="地图节点 ${wrappedIndex + 1}"
-        ></span>
+        >${isKey ? mapNodeIcon(tone) : ""}</span>
       `;
     })
     .join("");
 }
 
 function getJourneyPoint(offset) {
-  const t = Math.max(0.04, Math.min(0.98, 0.5 + offset * 0.055));
-  const point = getRoutePoint(t);
+  const route = getJourneyRouteMetrics();
+  const targetDistance = Math.max(
+    0,
+    Math.min(route.totalLength, route.totalLength / 2 + offset * JOURNEY_NODE_GAP),
+  );
+  let low = 0;
+  let high = route.samples.length - 1;
+
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (route.samples[middle].distance < targetDistance) low = middle + 1;
+    else high = middle;
+  }
+
+  const next = route.samples[low];
+  const previous = route.samples[Math.max(0, low - 1)];
+  const span = Math.max(0.001, next.distance - previous.distance);
+  const ratio = (targetDistance - previous.distance) / span;
+
   return {
-    x: point.x - 310,
-    y: point.y - 112,
+    x: Number((previous.x + (next.x - previous.x) * ratio).toFixed(3)),
+    y: Number((previous.y + (next.y - previous.y) * ratio).toFixed(3)),
   };
+}
+
+function getJourneyRouteMetrics() {
+  if (journeyRouteMetricsCache) return journeyRouteMetricsCache;
+
+  const samples = [];
+  let totalLength = 0;
+  let previous = null;
+
+  for (let index = 0; index <= JOURNEY_ROUTE_SAMPLE_COUNT; index += 1) {
+    const routePoint = getRoutePoint(index / JOURNEY_ROUTE_SAMPLE_COUNT);
+    const point = {
+      x: routePoint.x / 10,
+      y: routePoint.y / 6.2,
+    };
+    const screenPoint = {
+      x: (point.x / 100) * JOURNEY_ROUTE_REFERENCE_WIDTH,
+      y: (point.y / 100) * JOURNEY_ROUTE_REFERENCE_HEIGHT,
+    };
+
+    if (previous) {
+      totalLength += Math.hypot(screenPoint.x - previous.screenX, screenPoint.y - previous.screenY);
+    }
+    samples.push({ ...point, distance: totalLength });
+    previous = { screenX: screenPoint.x, screenY: screenPoint.y };
+  }
+
+  journeyRouteMetricsCache = { samples, totalLength };
+  return journeyRouteMetricsCache;
 }
 
 function getRoutePoint(t) {
   const segments = [
     [
-      { x: 20, y: 218 },
-      { x: 105, y: 166 },
-      { x: 122, y: 220 },
-      { x: 202, y: 158 },
+      { x: -80, y: 470 },
+      { x: 120, y: 430 },
+      { x: 220, y: 510 },
+      { x: 370, y: 400 },
     ],
     [
-      { x: 202, y: 158 },
-      { x: 282, y: 96 },
-      { x: 326, y: 72 },
-      { x: 418, y: 112 },
+      { x: 370, y: 400 },
+      { x: 520, y: 290 },
+      { x: 610, y: 250 },
+      { x: 760, y: 350 },
     ],
     [
-      { x: 418, y: 112 },
-      { x: 510, y: 152 },
-      { x: 512, y: 154 },
-      { x: 600, y: 30 },
+      { x: 760, y: 350 },
+      { x: 910, y: 450 },
+      { x: 930, y: 380 },
+      { x: 1080, y: 250 },
     ],
   ];
   const scaled = Math.max(0, Math.min(0.999, t)) * segments.length;
@@ -2429,6 +2480,18 @@ function cubicPoint(p0, p1, p2, p3, t) {
 function getNodeTone(index) {
   const tones = ["hot", "calm", "risk", "choice", "sky", "stone"];
   return tones[index % tones.length];
+}
+
+function mapNodeIcon(tone) {
+  const icons = {
+    hot: '<path d="M5 15V10M10 15V6M15 15V3"/><path d="M3 17h14"/>',
+    calm: '<path d="M5 7h10v9H5z"/><path d="M8 7V5h4v2M8 11h4"/>',
+    risk: '<path d="M10 3l6 2v4c0 4-2.5 6.5-6 8-3.5-1.5-6-4-6-8V5z"/><path d="M8 10l1.5 1.5L13 8"/>',
+    choice: '<path d="M10 3l2 4 4.5.7-3.2 3.2.8 4.6-4.1-2.2-4.1 2.2.8-4.6-3.2-3.2L8 7z"/>',
+    sky: '<path d="M10 3l6 2v4c0 4-2.5 6.5-6 8-3.5-1.5-6-4-6-8V5z"/><path d="M10 6v7"/>',
+    stone: '<path d="M5 7h10v9H5z"/><path d="M8 7V5h4v2M8 11h4"/>',
+  };
+  return `<svg viewBox="0 0 20 20" aria-hidden="true">${icons[tone] || icons.stone}</svg>`;
 }
 
 function categoryLabel(category) {

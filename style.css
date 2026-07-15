@@ -1,23 +1,38 @@
 :root {
-  --bg: #edf4f1;
-  --panel: #fffefa;
-  --panel-strong: #e8f3ff;
-  --ink: #28231d;
-  --muted: #65726f;
-  --line: #d7e4df;
-  --orange: #e87534;
-  --orange-dark: #bd5221;
-  --blue: #4a8ad4;
-  --green: #4f9f68;
-  --purple: #8664c8;
-  --yellow: #e7b43d;
-  --red: #d65345;
-  --gray: #a59d92;
-  --shadow: 0 14px 35px rgba(34, 71, 67, 0.12);
+  --bg: #F7F1E4;
+  --bg-soft: #FBF7EC;
+  --card: #FFFDF7;
+  --map-bg: #FFF8EA;
+  --text-main: #2A241F;
+  --text-sub: #6F6A5F;
+  --text-light: #9A9387;
+  --orange: #F2762E;
+  --orange-deep: #D95F1E;
+  --yellow: #F3BE3F;
+  --green: #5A9B55;
+  --blue: #4B8FD6;
+  --purple: #8A67D6;
+  --red: #D85C3A;
+  --gray-node: #C9C0B4;
+  --border: rgba(82, 66, 45, 0.12);
+  --shadow-card: 0 12px 28px rgba(94, 73, 45, 0.12);
+  --shadow-soft: 0 8px 22px rgba(94, 73, 45, 0.08);
+  --shadow-node: 0 8px 18px rgba(94, 73, 45, 0.18);
+
+  /* Legacy aliases keep existing components on the same design system. */
+  --panel: var(--card);
+  --panel-strong: #EEF5FB;
+  --ink: var(--text-main);
+  --muted: var(--text-sub);
+  --line: var(--border);
+  --line-strong: rgba(82, 66, 45, 0.2);
+  --orange-dark: var(--orange-deep);
+  --gray: #AAA398;
+  --shadow: var(--shadow-card);
   color-scheme: light;
   font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
-    "Microsoft YaHei", sans-serif;
+    "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
 }
 
 * {
@@ -3466,6 +3481,486 @@ button {
   }
 }
 
+/* Map page: layered tabletop board with a local route window. */
+.game-screen .status-bar {
+  gap: 10px;
+  padding-bottom: 13px;
+  background: rgba(251, 247, 236, 0.96);
+  border-bottom-color: rgba(82, 66, 45, 0.1);
+  box-shadow: 0 8px 22px rgba(94, 73, 45, 0.07);
+}
+
+.game-screen .progress-track {
+  height: 5px;
+  margin-bottom: 2px;
+  background: rgba(242, 118, 46, 0.1);
+}
+
+.game-screen .hud-menu-button {
+  width: 42px;
+  height: 42px;
+  color: var(--text-sub);
+  background: rgba(255, 253, 247, 0.72);
+  box-shadow: 0 5px 14px rgba(94, 73, 45, 0.07);
+}
+
+.game-screen .hud-core {
+  gap: 0;
+}
+
+.game-screen .hud-reserve {
+  padding: 7px 14px 7px 0;
+}
+
+.game-screen .hud-buffer {
+  padding: 7px 0 7px 14px;
+}
+
+.game-screen .hud-buffer .meter-track {
+  height: 6px;
+  background: rgba(75, 143, 214, 0.1);
+}
+
+.map-panel {
+  padding: 22px 20px 20px;
+  overflow: visible;
+  background: var(--card);
+  border: 1px solid rgba(82, 66, 45, 0.1);
+  border-radius: 28px;
+  box-shadow: 0 16px 34px rgba(94, 73, 45, 0.12);
+}
+
+.map-title {
+  display: block;
+  margin: 0 0 16px;
+  color: var(--text-main);
+}
+
+.map-title span {
+  display: block;
+  font-size: 23px;
+  font-weight: 800;
+  line-height: 1.22;
+  letter-spacing: 0;
+}
+
+.journey-map.map-canvas {
+  isolation: isolate;
+  height: 348px;
+  border: 1px solid rgba(82, 66, 45, 0.12);
+  border-radius: 24px;
+  background-color: var(--map-bg);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 -18px 34px rgba(94, 73, 45, 0.055),
+    0 10px 24px rgba(94, 73, 45, 0.09);
+  perspective: 760px;
+}
+
+.journey-map.map-canvas::before {
+  z-index: 1;
+  inset: 0;
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.2), transparent 36%),
+    linear-gradient(0deg, rgba(79, 121, 137, 0.04), transparent 38%);
+  transform: none;
+  opacity: 1;
+  pointer-events: none;
+}
+
+.life-map-background {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  pointer-events: none;
+  user-select: none;
+}
+
+.journey-map.map-canvas::after {
+  inset: auto 24px 4px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(94, 73, 45, 0.07);
+  filter: blur(9px);
+  pointer-events: none;
+}
+
+.map-depth {
+  display: none;
+}
+
+.map-card-stack {
+  position: absolute;
+  top: 20px;
+  right: 18px;
+  z-index: 3;
+  display: block;
+  width: 43px;
+  height: 56px;
+  opacity: 0.82;
+  pointer-events: none;
+}
+
+.map-card-stack i {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(82, 66, 45, 0.11);
+  border-radius: 9px;
+  background: rgba(255, 253, 247, 0.94);
+  box-shadow: 0 7px 16px rgba(94, 73, 45, 0.1);
+}
+
+.map-card-stack i:nth-child(1) {
+  transform: rotate(-8deg) translate(-5px, 4px);
+  background: #FFF0DE;
+}
+
+.map-card-stack i:nth-child(2) {
+  transform: rotate(6deg) translate(4px, 2px);
+  background: #EEF5FA;
+}
+
+.map-card-stack i:nth-child(3)::after {
+  content: "?";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: rgba(111, 106, 95, 0.55);
+  font-size: 18px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.journey-world {
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  transform: none;
+  transform-style: preserve-3d;
+}
+
+.journey-map.is-moving .journey-world {
+  animation: lifeMapDrift 720ms cubic-bezier(0.18, 0.82, 0.26, 1) both;
+}
+
+.life-map-path-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.life-map-path-layer path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.map-path-shadow {
+  stroke: rgba(93, 71, 43, 0.18);
+  stroke-width: 58;
+  transform: translateY(14px);
+  filter: blur(5px);
+}
+
+.map-path-main {
+  stroke: #FFF7E9;
+  stroke-width: 54;
+}
+
+.map-path-dashed {
+  stroke: rgba(128, 105, 77, 0.34);
+  stroke-width: 3;
+  stroke-dasharray: 12 16;
+}
+
+.journey-node {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  z-index: 4;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--node-color, var(--gray-node));
+  transform: translate(-50%, -50%) scale(var(--scale));
+  box-shadow:
+    inset 0 2px 2px rgba(255, 255, 255, 0.42),
+    inset 0 -2px 3px rgba(42, 36, 31, 0.12),
+    0 5px 10px rgba(94, 73, 45, 0.16);
+  transition: opacity 0.24s ease, filter 0.24s ease;
+}
+
+.journey-node::after {
+  content: "";
+  position: absolute;
+  inset: 3px 4px auto;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.journey-node.is-key {
+  z-index: 5;
+  width: 40px;
+  height: 40px;
+  border: 5px solid rgba(255, 253, 247, 0.96);
+  box-shadow:
+    var(--shadow-node),
+    inset 0 2px 2px rgba(255, 255, 255, 0.4),
+    0 0 0 2px rgba(82, 66, 45, 0.05);
+}
+
+.journey-node.is-key::after {
+  display: none;
+}
+
+.journey-node.is-key svg {
+  position: absolute;
+  inset: 5px;
+  width: calc(100% - 10px);
+  height: calc(100% - 10px);
+  fill: none;
+  stroke: #FFFFFF;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.journey-node.tone-hot {
+  --node-color: var(--orange);
+}
+
+.journey-node.tone-calm {
+  --node-color: var(--green);
+}
+
+.journey-node.tone-sky {
+  --node-color: var(--blue);
+}
+
+.journey-node.tone-choice {
+  --node-color: var(--purple);
+}
+
+.journey-node.tone-risk {
+  --node-color: var(--red);
+}
+
+.journey-node.tone-stone {
+  --node-color: var(--gray-node);
+}
+
+.journey-node.past {
+  opacity: 0.96;
+  filter: saturate(0.92);
+}
+
+.journey-node.future {
+  opacity: 0.55;
+}
+
+.journey-node.future:not(.is-key) {
+  --node-color: var(--gray-node);
+}
+
+.journey-node.current {
+  --node-color: var(--yellow);
+  z-index: 6;
+  width: 48px;
+  height: 48px;
+  border: 4px solid rgba(255, 253, 247, 0.98);
+  opacity: 1;
+  filter: none;
+  transform: translate(-50%, -50%) scale(var(--scale));
+  box-shadow:
+    0 9px 18px rgba(94, 73, 45, 0.2),
+    0 0 0 6px rgba(243, 190, 63, 0.18),
+    0 0 28px rgba(242, 118, 46, 0.25);
+  animation: mapCurrentPulse 1.8s ease-in-out infinite;
+}
+
+.journey-node.current svg {
+  display: none;
+}
+
+.player-token {
+  position: absolute;
+  left: var(--player-x);
+  top: var(--player-y);
+  z-index: 20;
+  width: 60px;
+  height: 75px;
+  transform: translate(-50%, -86%);
+  filter: drop-shadow(0 11px 8px rgba(94, 73, 45, 0.22));
+  isolation: isolate;
+}
+
+.player-token::before {
+  content: none;
+}
+
+.player-token::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 5px;
+  z-index: -1;
+  width: 44px;
+  height: 18px;
+  border-radius: 50%;
+  transform: translateX(-50%);
+  background: rgba(242, 118, 46, 0.2);
+  filter: blur(10px);
+}
+
+.player-token img {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+}
+
+.player-month-label {
+  position: absolute;
+  left: 50%;
+  top: -14px;
+  z-index: 2;
+  width: max-content;
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: #FFFFFF;
+  background: var(--text-main);
+  box-shadow: 0 6px 14px rgba(42, 36, 31, 0.18);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+
+.journey-map.is-moving .player-token {
+  animation: mapTokenHop 720ms cubic-bezier(0.18, 0.82, 0.26, 1) both;
+}
+
+.move-banner {
+  top: 14px;
+  z-index: 10;
+  color: #FFFFFF;
+  background: linear-gradient(180deg, #F58A45, var(--orange-deep));
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  box-shadow: 0 12px 24px rgba(217, 95, 30, 0.24);
+}
+
+.move-dice {
+  color: var(--orange-deep);
+  background: var(--card);
+}
+
+.bottom-bar.game-actions {
+  gap: 10px;
+}
+
+.bottom-bar.game-actions .button {
+  min-height: 56px;
+  border-radius: 22px;
+}
+
+.roll-button .dice-face {
+  border-radius: 10px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34);
+}
+
+.history-button {
+  min-width: 96px;
+}
+
+.game-screen .disclaimer {
+  color: var(--text-light);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+@keyframes mapCurrentPulse {
+  0%,
+  100% {
+    box-shadow:
+      0 9px 18px rgba(94, 73, 45, 0.2),
+      0 0 0 6px rgba(243, 190, 63, 0.16),
+      0 0 24px rgba(242, 118, 46, 0.22);
+  }
+  50% {
+    box-shadow:
+      0 9px 18px rgba(94, 73, 45, 0.2),
+      0 0 0 10px rgba(243, 190, 63, 0.2),
+      0 0 34px rgba(242, 118, 46, 0.3);
+  }
+}
+
+@keyframes mapTokenHop {
+  0%,
+  100% {
+    transform: translate(-50%, -86%);
+  }
+  46% {
+    transform: translate(-50%, -96%) scale(1.035);
+  }
+}
+
+@keyframes lifeMapDrift {
+  from {
+    transform: translate(calc(0px - var(--drift-x)), calc(0px - var(--drift-y)));
+  }
+  to {
+    transform: translate(0, 0);
+  }
+}
+
+@media (max-width: 370px) {
+  .map-panel {
+    padding: 19px 16px 16px;
+    border-radius: 24px;
+  }
+
+  .map-title span {
+    font-size: 21px;
+  }
+
+  .journey-map.map-canvas {
+    height: 330px;
+    border-radius: 21px;
+  }
+
+  .player-token {
+    width: 56px;
+    height: 70px;
+    transform: translate(-50%, -86%);
+  }
+
+  .player-month-label {
+    top: -13px;
+  }
+
+  .history-button {
+    min-width: 86px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -3478,5 +3973,345 @@ button {
 
   .road-dash {
     animation: none !important;
+  }
+}
+
+/* Visual foundation: light tabletop finance game. */
+html,
+body {
+  overflow-x: hidden;
+  background-color: var(--bg);
+  background-image:
+    repeating-linear-gradient(0deg, rgba(82, 66, 45, 0.018) 0 1px, transparent 1px 5px),
+    linear-gradient(180deg, var(--bg-soft) 0%, #F1E8D6 100%);
+  color: var(--text-main);
+}
+
+body {
+  font-family:
+    "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.phone-shell {
+  background-color: var(--bg);
+  background-image: repeating-linear-gradient(0deg, rgba(82, 66, 45, 0.014) 0 1px, transparent 1px 6px);
+  box-shadow: 0 0 0 1px var(--border), 0 24px 70px rgba(94, 73, 45, 0.16);
+}
+
+.screen {
+  color: var(--text-main);
+}
+
+h1,
+h2,
+h3,
+.page-title {
+  color: var(--text-main);
+  letter-spacing: 0;
+  text-wrap: balance;
+}
+
+.hero h1 {
+  font-size: 42px;
+}
+
+.page-title {
+  font-size: 28px;
+}
+
+strong,
+[data-animate-number] {
+  font-variant-numeric: tabular-nums;
+}
+
+.snapshot-card,
+.panel,
+.identity-card,
+.event-card,
+.result-card,
+.map-panel,
+.modal,
+.onboarding-card {
+  background-color: var(--card);
+  border-color: var(--border);
+  border-radius: 20px;
+  box-shadow: var(--shadow-card);
+}
+
+.identity-card {
+  background-image: linear-gradient(180deg, var(--card) 0%, var(--bg-soft) 100%);
+}
+
+.character-stat,
+.choice-button,
+.settlement-main-card,
+.detail-row,
+.investment-snapshot div,
+.debug-state-summary > div,
+.plan-item {
+  border-color: var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-soft);
+}
+
+.event-modal-card {
+  border-radius: 22px;
+  box-shadow: var(--shadow-card);
+}
+
+.event-card-body {
+  background-color: var(--card);
+  border-radius: 0 0 18px 18px;
+}
+
+.button {
+  min-height: 52px;
+  border-radius: 16px;
+  padding: 13px 18px;
+  font-weight: 800;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease,
+    background 0.18s ease,
+    filter 0.18s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.button.primary {
+  min-height: 52px;
+  color: #FFFFFF;
+  background: linear-gradient(180deg, #F58A45 0%, var(--orange) 54%, var(--orange-deep) 100%);
+  box-shadow: 0 11px 22px rgba(217, 95, 30, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+.button.primary:hover {
+  background: linear-gradient(180deg, #F49352 0%, #ED6D27 54%, #CD551A 100%);
+  box-shadow: 0 13px 26px rgba(217, 95, 30, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.32);
+}
+
+.button.secondary {
+  color: var(--text-main);
+  background: var(--card);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-soft);
+}
+
+.button.secondary:hover {
+  border-color: rgba(242, 118, 46, 0.28);
+  background: var(--bg-soft);
+}
+
+.button.ghost {
+  color: var(--text-sub);
+  background: rgba(255, 253, 247, 0.62);
+  border-color: var(--border);
+}
+
+.button.danger {
+  color: var(--red);
+  background: #FFF4EF;
+  border-color: rgba(216, 92, 58, 0.2);
+}
+
+.button:active {
+  transform: translateY(1px) scale(0.985);
+  box-shadow: var(--shadow-soft);
+}
+
+.button:focus-visible,
+.segment:focus-visible,
+.choice-button:focus-visible,
+.field input:focus-visible,
+.field select:focus-visible {
+  outline: 3px solid rgba(75, 143, 214, 0.3);
+  outline-offset: 2px;
+}
+
+.button.small {
+  min-height: 42px;
+  border-radius: 13px;
+}
+
+.button.primary.small {
+  min-height: 52px;
+}
+
+.field input,
+.field select,
+.debug-form input,
+.debug-form select {
+  min-height: 52px;
+  color: var(--text-main);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.74);
+}
+
+.field input:focus,
+.field select:focus,
+.debug-form input:focus,
+.debug-form select:focus {
+  border-color: rgba(242, 118, 46, 0.55);
+  box-shadow: 0 0 0 4px rgba(242, 118, 46, 0.1);
+}
+
+.segment {
+  min-height: 46px;
+  color: var(--text-sub);
+  background: var(--card);
+  border-color: var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-soft);
+}
+
+.segment.active {
+  color: var(--orange-deep);
+  background: #FFF0E2;
+  border-color: rgba(242, 118, 46, 0.38);
+  box-shadow: 0 8px 18px rgba(217, 95, 30, 0.12);
+}
+
+.status-bar {
+  background: rgba(251, 247, 236, 0.94);
+  border-bottom-color: var(--border);
+  box-shadow: 0 8px 20px rgba(94, 73, 45, 0.06);
+}
+
+.hud-menu-button {
+  background: var(--card);
+  border-color: var(--border);
+  box-shadow: var(--shadow-soft);
+}
+
+.hud-reserve:not(.is-falling) strong,
+.character-stat.reserve strong,
+.summary-row.good strong {
+  color: var(--green);
+}
+
+.hud-reserve strong {
+  font-size: 27px;
+}
+
+.hud-buffer > div:first-child strong {
+  color: var(--blue);
+}
+
+.meter-track,
+.progress-track {
+  background: rgba(75, 143, 214, 0.12);
+}
+
+.progress-track i {
+  background: var(--orange);
+}
+
+.event-card-head.cat-family,
+.event-card-head.cat-cost {
+  background: var(--orange);
+}
+
+.event-card-head.cat-income,
+.event-card-head.cat-positive {
+  background: var(--green);
+}
+
+.event-card-head.cat-health {
+  background: var(--red);
+}
+
+.event-card-head.cat-choice {
+  color: #FFFFFF;
+  background: var(--purple);
+}
+
+.event-card-head.cat-choice i {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.journey-node.tone-hot {
+  --node-color: var(--orange);
+}
+
+.journey-node.tone-calm {
+  --node-color: var(--green);
+}
+
+.journey-node.tone-sky {
+  --node-color: var(--blue);
+}
+
+.journey-node.tone-choice {
+  --node-color: var(--purple);
+}
+
+.journey-node.tone-risk {
+  --node-color: var(--red);
+}
+
+.journey-node.tone-stone {
+  --node-color: var(--gray);
+}
+
+/* Map page: quieter card depth and a simpler active-status list. */
+.game-screen .status-bar {
+  box-shadow: 0 4px 14px rgba(94, 73, 45, 0.035);
+}
+
+.game-screen .map-panel {
+  box-shadow: 0 8px 20px rgba(94, 73, 45, 0.055);
+}
+
+.game-screen .plan-strip {
+  gap: 0;
+  padding: 0 16px;
+  border-color: var(--border);
+  border-radius: 16px;
+  background: rgba(255, 253, 247, 0.78);
+}
+
+.game-screen .plan-item {
+  gap: 4px;
+  padding: 14px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.game-screen .plan-item + .plan-item {
+  padding-top: 14px;
+  border-top: 1px solid rgba(82, 66, 45, 0.12);
+}
+
+.toast {
+  color: var(--card);
+  background: var(--text-main);
+  box-shadow: 0 14px 30px rgba(42, 36, 31, 0.22);
+}
+
+@media (max-width: 370px) {
+  .hero h1 {
+    font-size: 36px;
+  }
+
+  .hud-reserve strong {
+    font-size: 22px;
+  }
+
+  .snapshot-card,
+  .panel,
+  .identity-card,
+  .event-card,
+  .result-card,
+  .map-panel,
+  .modal,
+  .onboarding-card {
+    border-radius: 18px;
   }
 }
