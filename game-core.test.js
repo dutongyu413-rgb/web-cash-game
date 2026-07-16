@@ -105,6 +105,18 @@ test("全部卖出后持仓归零", () => {
   assert.equal(sale.status, "sold_all");
 });
 
+test("定投市场节点按自然月份推进，不受挑战长度压缩", () => {
+  const earliestRecovery = core.getDcaMilestoneMonth(1, core.DCA_TIMING.recoveryDelayMin);
+  const earliestOvervalued = core.getDcaMilestoneMonth(earliestRecovery, core.DCA_TIMING.overvaluedDelayMin);
+  const laterRecovery = core.getDcaMilestoneMonth(3, 12);
+  const laterOvervalued = core.getDcaMilestoneMonth(laterRecovery, 16);
+  assert.equal(earliestRecovery, 9);
+  assert.equal(earliestOvervalued, 19);
+  assert.ok(earliestOvervalued > 12);
+  assert.equal(laterRecovery, 15);
+  assert.equal(laterOvervalued, 31);
+});
+
 test("同月到期的后续事件会全部进入队列且已触发项不会重复", () => {
   const cards = [
     { id: "a", triggerMonth: 4, triggered: false },

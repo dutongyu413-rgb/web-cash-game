@@ -4,6 +4,13 @@
   if (root) root.CashGameCore = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, function createCashGameCore() {
   const GAME_STATE_VERSION = 2;
+  const DCA_TIMING = Object.freeze({
+    entryWindowEndMonth: 10,
+    recoveryDelayMin: 8,
+    recoveryDelayMax: 14,
+    overvaluedDelayMin: 10,
+    overvaluedDelayMax: 18,
+  });
 
   function normalizeSeed(seed) {
     const text = String(seed ?? "cash-game");
@@ -97,6 +104,12 @@
     };
   }
 
+  function getDcaMilestoneMonth(startMonth, delayMonths) {
+    const normalizedStart = Math.max(1, Math.round(Number(startMonth) || 1));
+    const normalizedDelay = Math.max(1, Math.round(Number(delayMonths) || 1));
+    return normalizedStart + normalizedDelay;
+  }
+
   function getDueScheduledCards(cards, currentMonth) {
     return (Array.isArray(cards) ? cards : []).filter(
       (card) => !card.triggered && Number(card.triggerMonth) <= Number(currentMonth),
@@ -119,12 +132,14 @@
 
   return {
     GAME_STATE_VERSION,
+    DCA_TIMING,
     normalizeSeed,
     nextSeededRandom,
     migratePlayerState,
     calculateSettlement,
     calculateProtectionChange,
     calculateDcaSale,
+    getDcaMilestoneMonth,
     getDueScheduledCards,
     tickDuration,
     getCurveBuffers,

@@ -1,4 +1,4 @@
-import { createReadStream, existsSync } from "node:fs";
+import { createReadStream, existsSync, statSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { createServer } from "node:http";
 import { networkInterfaces } from "node:os";
@@ -30,7 +30,30 @@ createServer((request, response) => {
     return;
   }
 
-  response.writeHead(200, { "Content-Type": types[extname(filePath)] || "application/octet-stream" });
+  const stats = statSync(filePath);
+  const etag = `W/"${stats.size}-${Math.trunc(stats.mtimeMs)}"`;
+  const isImageAsset = pathname.startsWith("/assets/") && [".jpg", ".jpeg", ".png", ".webp"].includes(extname(filePath));
+  const headers = {
+    "Content-Type": types[extname(filePath)] || "application/octet-stream",
+    "Content-Length": stats.size,
+    "Last-Modified": stats.mtime.toUTCString(),
+    ETag: etag,
+    "Cache-Control": isImageAsset
+      ? "public, max-age=3600, stale-while-revalidate=86400"
+      : "no-cache",
+  };
+
+  if (request.headers["if-none-match"] === etag) {
+    response.writeHead(304, headers);
+    response.end();
+    return;
+  }
+
+  response.writeHead(200, headers);
+  if (request.method === "HEAD") {
+    response.end();
+    return;
+  }
   createReadStream(filePath).pipe(response);
 }).listen(port, host, () => {
   const localAddress = getLocalAddress();

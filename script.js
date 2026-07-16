@@ -4,7 +4,7 @@ const toast = document.getElementById("toast");
 const TRACKING_PROJECT = "cash_game";
 const TRACKING_SCRIPT_SRC = "https://cloud.umami.is/script.js";
 const ONBOARDING_STORAGE_KEY = "cashflowLifeMapOnboardingV2";
-const APP_VERSION = "0.3.0-internal";
+const APP_VERSION = "0.3.2-internal";
 const GAME_STATE_VERSION = window.CashGameCore?.GAME_STATE_VERSION || 2;
 const debugParams = new URLSearchParams(window.location.search);
 const debugMode = debugParams.get("debug") === "1" || debugParams.has("seed");
@@ -13,7 +13,7 @@ let player = null;
 let savedGameAvailable = false;
 let lastDice = null;
 let pendingMonthlySummary = null;
-let selectedMaxMonth = 36;
+let selectedMaxMonth = 12;
 let mapMotion = null;
 let pendingTrackingEvents = [];
 let debugRandomState = window.CashGameCore.normalizeSeed(debugParams.get("seed") || "cash-game-debug");
@@ -22,8 +22,16 @@ let debugForcedEventId = debugParams.get("event") || null;
 let onboardingStep = 0;
 let onboardingManual = false;
 let eventRevealTimer = null;
+let gameVisualAssetsPreloaded = false;
+const preloadedGameVisualImages = [];
+
+const gameVisualAssets = [
+  { primary: "assets/life-map-paper.webp", fallback: "assets/life-map-paper.png" },
+  { primary: "assets/life-map-player.webp", fallback: "assets/life-map-player.png" },
+];
 
 const challengeLengths = [12, 24, 36];
+const dcaTiming = window.CashGameCore.DCA_TIMING;
 if (debugMode && challengeLengths.includes(Number(debugParams.get("months")))) {
   selectedMaxMonth = Number(debugParams.get("months"));
 }
@@ -106,12 +114,48 @@ function renderHome() {
   app.innerHTML = `
     <section class="screen home-poster-screen">
       <div class="home-poster-wrap">
-        <img class="home-poster" src="assets/home-poster.jpg" width="941" height="1672" loading="eager" decoding="async" fetchpriority="high" alt="36 个月现金流生存挑战游戏海报，展示人生地图、身份卡牌、事件卡牌、骰子和安全垫。" />
+        <picture class="home-poster-media">
+          <source
+            type="image/webp"
+            srcset="assets/home-poster-480.webp 480w, assets/home-poster-768.webp 768w, assets/home-poster-941.webp 941w"
+            sizes="(max-width: 430px) 100vw, 430px"
+          />
+          <img class="home-poster" src="assets/home-poster.jpg" width="941" height="1672" loading="eager" decoding="async" fetchpriority="high" alt="36 个月现金流生存挑战游戏海报，展示人生地图、身份卡牌、事件卡牌、骰子和安全垫。" />
+        </picture>
         <button class="poster-start-hotspot" data-action="start-game" aria-label="开始游戏"></button>
       </div>
       <p class="disclaimer">本游戏仅用于现金流管理和投资者教育场景下的模拟体验，不构成任何投资建议或收益承诺。</p>
     </section>
   `;
+
+  const poster = app.querySelector(".home-poster");
+  const schedulePreload = () => {
+    if (typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(preloadGameVisuals, { timeout: 1200 });
+    } else {
+      window.setTimeout(preloadGameVisuals, 180);
+    }
+  };
+  if (poster?.complete) schedulePreload();
+  else poster?.addEventListener("load", schedulePreload, { once: true });
+}
+
+function preloadGameVisuals() {
+  if (gameVisualAssetsPreloaded) return;
+  gameVisualAssetsPreloaded = true;
+
+  gameVisualAssets.forEach(({ primary, fallback }) => {
+    const image = new Image();
+    image.decoding = "async";
+    image.onerror = () => {
+      const fallbackImage = new Image();
+      fallbackImage.decoding = "async";
+      fallbackImage.src = fallback;
+      preloadedGameVisualImages.push(fallbackImage);
+    };
+    image.src = primary;
+    preloadedGameVisualImages.push(image);
+  });
 }
 
 function renderRandomIdentity(identity = randomItem(identityCards)) {
@@ -323,7 +367,10 @@ function renderGamePage(message = "", options = {}) {
           </div>
         </div>
         <div class="journey-map map-canvas ${mapMotion ? "is-moving" : ""}" style="${mapMotion ? `--drift-x:${mapMotion.driftX}px; --drift-y:${mapMotion.driftY}px;` : ""}">
-          <img class="life-map-background" src="assets/life-map-paper.png" alt="" aria-hidden="true" decoding="async" />
+          <picture class="life-map-background-media" aria-hidden="true">
+            <source type="image/webp" srcset="assets/life-map-paper.webp" />
+            <img class="life-map-background" src="assets/life-map-paper.png" width="744" height="760" alt="" decoding="async" fetchpriority="high" />
+          </picture>
           ${moveBannerHtml}
           <div class="map-card-stack" aria-hidden="true">
             <i></i>
@@ -340,7 +387,10 @@ function renderGamePage(message = "", options = {}) {
           </div>
           <div class="player-token" style="--player-x:${currentMapPoint.x}%; --player-y:${currentMapPoint.y}%;" aria-label="当前位置">
             <b class="player-month-label">第 ${player.currentMonth} 个月</b>
-            <img src="assets/life-map-player.png" alt="" aria-hidden="true" decoding="async" />
+            <picture class="player-token-media" aria-hidden="true">
+              <source type="image/webp" srcset="assets/life-map-player.webp" />
+              <img src="assets/life-map-player.png" width="180" height="225" alt="" decoding="async" fetchpriority="high" />
+            </picture>
           </div>
         </div>
       </div>
@@ -396,7 +446,7 @@ function revealEventCard(event) {
       <div class="event-reveal-line"><i></i><i></i><i></i><i></i><i></i></div>
       <div class="event-reveal-mark">?</div>
     </div>
-  `);
+  `, "event-reveal-backdrop");
   window.clearTimeout(eventRevealTimer);
   eventRevealTimer = window.setTimeout(() => showEventCard(event), 320);
 }
@@ -674,6 +724,10 @@ function restartGame() {
 function showEventCard(event) {
   if (!event) return;
   const isChoice = Array.isArray(event.choices);
+  if (!isChoice) {
+    confirmEvent(event.id);
+    return;
+  }
   const protectionPreview = getProtectionPreview(event, event.effect);
   openModal(`
     <div class="event-modal-card ${categoryClass(event.category)}">
@@ -737,7 +791,7 @@ function showEventCard(event) {
           `
       }
     </div>
-  `);
+  `, "choice-event-backdrop");
 }
 
 function confirmEvent(eventId, choiceIndex = null) {
@@ -763,7 +817,16 @@ function confirmEvent(eventId, choiceIndex = null) {
   saveGame();
   closeModal();
   updateTurnCue("事件影响已确认");
-  showMonthlySummary();
+  if (shouldShowDetailedSettlement(pendingMonthlySummary)) {
+    showMonthlySummary();
+    return;
+  }
+  endMonth({ quick: true });
+}
+
+function shouldShowDetailedSettlement(summary) {
+  if (!summary) return false;
+  return summary.savingsAfterMonth < 0;
 }
 
 function updateTurnCue(message) {
@@ -868,7 +931,7 @@ function endGameNow() {
   renderResultPage();
 }
 
-function endMonth() {
+function endMonth(options = {}) {
   if (!pendingMonthlySummary) return;
   const settledSummary = pendingMonthlySummary;
   recordActualMonthStress(settledSummary);
@@ -912,6 +975,7 @@ function endMonth() {
     endReason: player.savings < 0 ? "cash_broken" : player.currentMonth >= player.maxMonth ? "completed" : null,
     nextMonth: player.currentMonth + 1,
     recoveryMessages,
+    quickFeedback: options.quick ? createQuickFeedback(settledSummary) : null,
   };
   saveGame();
   closeModal();
@@ -1683,10 +1747,13 @@ function buildMonthlySummary(event, choice, before, afterEffect) {
     month: player.currentMonth,
     eventId: event.id,
     eventTitle: event.title,
+    eventDescription: event.description,
     category: event.category,
     choiceLabel: choice ? choice.label : null,
     savingsBefore: before.savings,
     bufferBefore: beforeBuffer,
+    incomeBefore: before.income,
+    expenseBefore: before.expense,
     recurringIncome,
     recurringExpense,
     currentIncome,
@@ -1959,6 +2026,93 @@ function finishMonthTransition() {
   saveGame();
   closeModal();
   renderGamePage(nextMonthMessage(transition.recoveryMessages || []));
+  if (transition.quickFeedback) showTurnFeedback(transition.quickFeedback);
+}
+
+function createQuickFeedback(summary) {
+  const incomeDelta = summary.currentIncome - (summary.incomeBefore ?? summary.recurringIncome);
+  const expenseDelta = summary.currentExpense - (summary.expenseBefore ?? summary.recurringExpense);
+  const impactRows = [];
+
+  if (summary.reserveDelta) impactRows.push({ label: "现金储备", value: formatSignedMoney(summary.reserveDelta) });
+  if (incomeDelta) impactRows.push({ label: incomeDelta > 0 ? "本月收入" : "收入影响", value: formatSignedMoney(incomeDelta) });
+  if (expenseDelta) impactRows.push({ label: expenseDelta > 0 ? "支出增加" : "支出减少", value: formatSignedMoney(expenseDelta) });
+  if (!impactRows.length) impactRows.push({ label: "本月现金流", value: formatSignedMoney(summary.monthlyNetCashflow) });
+
+  const crossedThreshold = [3, 1, 0].find(
+    (threshold) => summary.bufferBefore >= threshold && summary.bufferAfterMonth < threshold,
+  );
+  const isCheckpoint = summary.month < player.maxMonth && summary.month % 4 === 0;
+
+  return {
+    eventTitle: summary.eventTitle,
+    eventDescription: summary.eventDescription,
+    choiceLabel: summary.choiceLabel,
+    month: summary.month,
+    savingsAfter: summary.savingsAfterMonth,
+    savingsDelta: summary.savingsDelta,
+    bufferBefore: summary.bufferBefore,
+    bufferAfter: summary.bufferAfterMonth,
+    impactRows: impactRows.slice(0, 2),
+    crossedThreshold: crossedThreshold ?? null,
+    protectionReduction: summary.protectionReduction || 0,
+    isCheckpoint,
+  };
+}
+
+function showTurnFeedback(feedback) {
+  document.querySelectorAll(".turn-feedback-backdrop").forEach((node) => node.remove());
+  const backdrop = document.createElement("div");
+  const element = document.createElement("div");
+  const tone = feedback.crossedThreshold !== null ? "is-warning" : feedback.savingsDelta < 0 ? "is-down" : "is-up";
+  const [primaryImpact, secondaryImpact] = feedback.impactRows;
+  backdrop.className = "turn-feedback-backdrop";
+  element.className = `turn-feedback ${tone}`;
+  element.setAttribute("role", "dialog");
+  element.setAttribute("aria-modal", "true");
+  element.innerHTML = `
+    <div class="turn-feedback-head">
+      <span>${feedback.isCheckpoint ? `阶段完成 · ${feedback.month} / ${player.maxMonth} 个月` : `第 ${feedback.month} 个月结算`}</span>
+      <strong>${escapeHtml(feedback.eventTitle)}</strong>
+      ${feedback.eventDescription ? `<p>${escapeHtml(feedback.eventDescription)}</p>` : ""}
+      ${feedback.choiceLabel ? `<small>选择：${escapeHtml(feedback.choiceLabel)}</small>` : ""}
+    </div>
+    <div class="turn-feedback-result">
+      <span>${escapeHtml(primaryImpact.label)}</span>
+      <strong>${escapeHtml(primaryImpact.value)}</strong>
+      ${secondaryImpact ? `<small>${escapeHtml(secondaryImpact.label)} ${escapeHtml(secondaryImpact.value)}</small>` : ""}
+    </div>
+    ${
+      feedback.crossedThreshold !== null
+        ? `<div class="turn-feedback-alert">安全垫跌破 ${feedback.crossedThreshold} 个月</div>`
+        : ""
+    }
+    ${
+      feedback.protectionReduction
+        ? `<div class="turn-feedback-protection">基础保障生效，本次少花 ${formatMoney(feedback.protectionReduction)}</div>`
+        : ""
+    }
+    <div class="turn-feedback-footer">
+      <div><span>月末现金储备</span><strong>${formatMoney(feedback.savingsAfter)}</strong></div>
+      <div><span>安全垫</span><strong>${formatBuffer(feedback.bufferBefore)} → ${formatBuffer(feedback.bufferAfter)} 个月</strong></div>
+    </div>
+    <span class="turn-feedback-hint">点击卡片外关闭</span>
+  `;
+  backdrop.appendChild(element);
+  document.body.appendChild(backdrop);
+
+  let dismissed = false;
+  const dismiss = () => {
+    if (dismissed) return;
+    dismissed = true;
+    backdrop.classList.remove("show");
+    window.setTimeout(() => backdrop.remove(), 220);
+  };
+
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop) dismiss();
+  });
+  window.requestAnimationFrame(() => backdrop.classList.add("show"));
 }
 
 function scheduleCarFollowUps() {
@@ -2010,21 +2164,29 @@ function maybeTriggerDcaMarketEvent() {
   if (!plan || plan.status === "sold_all") return;
   if (getDcaHoldingPrincipal(plan) <= 0) return;
 
-  if (!plan.recoveryTriggered && player.currentMonth >= (plan.recoveryMonth || player.maxMonth)) {
+  if (!Number.isFinite(plan.recoveryMonth)) {
+    plan.recoveryMonth = getDcaRecoveryMonth(plan.startMonth || player.currentMonth);
+  }
+
+  if (!plan.recoveryTriggered && player.currentMonth >= plan.recoveryMonth) {
     plan.recoveryTriggered = true;
     plan.marketStage = "recovered";
     plan.currentReturnRate = getDcaMarketState("recovered").returnRate;
     plan.pendingMarketStage = "recovered";
-    plan.overvaluedMonth = getDcaOvervaluedMonth();
+    plan.overvaluedMonth = getDcaOvervaluedMonth(player.currentMonth);
     saveGame();
     window.setTimeout(() => renderDcaMarketCard(plan, "recovered"), 350);
     return;
   }
 
+  if (plan.recoveryTriggered && !Number.isFinite(plan.overvaluedMonth)) {
+    plan.overvaluedMonth = getDcaOvervaluedMonth(plan.recoveryMonth || player.currentMonth);
+  }
+
   if (
     plan.recoveryTriggered &&
     !plan.overvaluedTriggered &&
-    player.currentMonth >= (plan.overvaluedMonth || player.maxMonth) &&
+    player.currentMonth >= plan.overvaluedMonth &&
     getDcaHoldingPrincipal(plan) > 0
   ) {
     plan.overvaluedTriggered = true;
@@ -2248,8 +2410,6 @@ function getEventForCurrentPosition() {
     if (forcedEvent) return forcedEvent;
   }
   const cell = mapCells[player.position];
-  const earlyDcaEvent = getEarlyDcaEvent();
-  if (earlyDcaEvent && player.currentMonth === Math.min(10, player.maxMonth)) return earlyDcaEvent;
   const pools = cell.categories.flatMap((category) => eventCards.filter((event) => event.category === category));
   const eligiblePool = pools.filter((event) => {
     if (!isDcaEventAllowed(event)) return false;
@@ -2262,13 +2422,20 @@ function getEventForCurrentPosition() {
     if (!isDcaEventAllowed(event)) return false;
     return isEventAllowedByFrequency(event) && !hasActiveEvent(event.id);
   });
-  if (earlyDcaEvent && player.currentMonth >= 6 && randomFloat() < 0.35) return earlyDcaEvent;
   return weightedRandomItem(cooledPool.length ? cooledPool : eligiblePool.length ? eligiblePool : fallbackPool);
 }
 
 function getEarlyDcaEvent() {
   const event = eventCards.find((item) => item.id === "index_dca_choice");
-  if (!event || getDcaPlan() || player.currentMonth > 10 || !isEventAllowedByFrequency(event) || hasActiveEvent(event.id)) return null;
+  if (
+    !event ||
+    getDcaPlan() ||
+    player.currentMonth > dcaTiming.entryWindowEndMonth ||
+    !isEventAllowedByFrequency(event) ||
+    hasActiveEvent(event.id)
+  ) {
+    return null;
+  }
   return event;
 }
 
@@ -2705,13 +2872,18 @@ function dcaPlanCardTitle(plan) {
   return `正在进行的长期计划：${plan.name}`;
 }
 
-function getDcaRecoveryMonth() {
-  const latest = Math.max(player.currentMonth + 1, player.maxMonth - 1);
-  return Math.min(player.currentMonth + randomInt(3, 5), latest);
+function getDcaRecoveryMonth(startMonth = player.currentMonth) {
+  return window.CashGameCore.getDcaMilestoneMonth(
+    startMonth,
+    randomInt(dcaTiming.recoveryDelayMin, dcaTiming.recoveryDelayMax),
+  );
 }
 
-function getDcaOvervaluedMonth() {
-  return Math.min(player.currentMonth + randomInt(3, 5), player.maxMonth);
+function getDcaOvervaluedMonth(startMonth = player.currentMonth) {
+  return window.CashGameCore.getDcaMilestoneMonth(
+    startMonth,
+    randomInt(dcaTiming.overvaluedDelayMin, dcaTiming.overvaluedDelayMax),
+  );
 }
 
 function getDcaHoldingPrincipal(plan) {
@@ -3163,10 +3335,10 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
-function openModal(html) {
+function openModal(html, backdropClass = "") {
   closeModal();
   const backdrop = document.createElement("div");
-  backdrop.className = "modal-backdrop";
+  backdrop.className = `modal-backdrop ${backdropClass}`.trim();
   backdrop.innerHTML = `<div class="modal" role="dialog" aria-modal="true">${html}</div>`;
   document.body.appendChild(backdrop);
 }
@@ -3239,7 +3411,10 @@ function resumeLoadedGame() {
   }
   renderGamePage("已继续上次游戏。", { skipEcho: true });
   if (pendingMonthlySummary) {
-    window.setTimeout(showMonthlySummary, 120);
+    window.setTimeout(() => {
+      if (shouldShowDetailedSettlement(pendingMonthlySummary)) showMonthlySummary();
+      else endMonth({ quick: true });
+    }, 120);
     return;
   }
   if (player.pendingEchoes?.length) {
@@ -3266,6 +3441,7 @@ document.addEventListener("click", (event) => {
       // 记录：玩家从海报首页进入身份筛选页。
       had_saved_game: savedGameAvailable,
     });
+    preloadGameVisuals();
     renderRandomIdentity();
   }
 

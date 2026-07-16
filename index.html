@@ -10,7 +10,15 @@
       // 留空时不会加载 Umami，也不会发送任何统计数据。
       window.CASH_GAME_UMAMI_WEBSITE_ID = "ebe13ff1-7a56-4a1d-ab6d-3a4c2e8df138";
     </script>
-    <link rel="preload" as="image" href="assets/home-poster.jpg" fetchpriority="high" />
+    <link
+      rel="preload"
+      as="image"
+      type="image/webp"
+      href="assets/home-poster-768.webp"
+      imagesrcset="assets/home-poster-480.webp 480w, assets/home-poster-768.webp 768w, assets/home-poster-941.webp 941w"
+      imagesizes="(max-width: 430px) 100vw, 430px"
+      fetchpriority="high"
+    />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
