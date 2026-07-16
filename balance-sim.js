@@ -81,14 +81,14 @@ function weightedPick(random, items, weightFor) {
 function eventCooldown(event) {
   if (event.group === "interest") return 9;
   if (["salary_cut", "client_budget_cut", "temporary_unemployment", "elder_hospital", "insurance_gap", "emergency_fund_choice"].includes(event.id)) return 8;
-  if (event.category === "choice") return 7;
+  if (Array.isArray(event.choices)) return 7;
   if (event.category === "one_time_cost") return 5;
   return 4;
 }
 
 function eventMaxCount(event) {
   if (event.group === "interest") return 2;
-  if (ONCE_IDS.has(event.id) || event.category === "choice") return 1;
+  if (ONCE_IDS.has(event.id) || Array.isArray(event.choices)) return 1;
   if (["one_time_cost", "health_risk"].includes(event.category)) return 2;
   return Infinity;
 }
@@ -107,6 +107,7 @@ function eventCount(state, eventId) {
 }
 
 function eventAllowed(state, event) {
+  if (Array.isArray(event.careerIdentityIds) && !event.careerIdentityIds.includes(state.identityId)) return false;
   if (event.group === "interest") {
     const interestIds = new Set(eventCards.filter((card) => card.group === "interest").map((card) => card.id));
     if (state.draws.filter((draw) => interestIds.has(draw.id)).length >= 2) return false;
@@ -118,18 +119,27 @@ function eventAllowed(state, event) {
 }
 
 function drawEvent(state, random) {
+  const careerEvent = core.getDueCareerEvent(eventCards, {
+    identityId: state.identityId,
+    currentMonth: state.month,
+    triggerMonth: state.careerEventMonth,
+    drawnEventIds: state.draws.map((draw) => draw.id),
+  });
+  if (careerEvent) return careerEvent;
   const dcaEvent = eventCards.find((event) => event.id === "index_dca_choice");
   const dcaAvailable = dcaEvent && eventAllowed(state, dcaEvent);
   if (dcaAvailable && state.month === Math.min(10, state.maxMonth)) return dcaEvent;
 
   const categories = MAP_CELLS[state.position];
-  const pool = categories.flatMap((category) => eventCards.filter((event) => event.category === category));
+  const pool = categories.flatMap((category) =>
+    eventCards.filter((event) => event.category === category && !Array.isArray(event.careerIdentityIds)),
+  );
   const eligible = pool.filter((event) => eventAllowed(state, event));
   const cooled = eligible.filter((event) => {
     const last = [...state.draws].reverse().find((draw) => draw.id === event.id);
     return !last || state.month - last.month >= eventCooldown(event);
   });
-  const fallback = eventCards.filter((event) => eventAllowed(state, event));
+  const fallback = eventCards.filter((event) => !Array.isArray(event.careerIdentityIds) && eventAllowed(state, event));
   if (dcaAvailable && state.month >= 6 && random() < 0.35) return dcaEvent;
   const candidates = cooled.length ? cooled : eligible.length ? eligible : fallback;
   return weightedPick(random, candidates, (event) => event.weight || defaultWeight(event, state.month));
@@ -183,6 +193,16 @@ function estimateEffectValue(effect, state, monthsLeft) {
     return base * effect.amount * duration;
   }
   if (effect.type === "schedule_savings_effect") return effect.amount;
+  if (effect.type === "schedule_savings_by_income_percent") return state.baseIncome * effect.amount;
+  if (effect.type === "schedule_random_savings_effect") {
+    const totalWeight = effect.outcomes.reduce((sum, outcome) => sum + outcome.weight, 0);
+    return (
+      effect.outcomes.reduce(
+        (sum, outcome) => sum + core.calculateSavingsOutcomeAmount(outcome, state.baseIncome) * outcome.weight,
+        0,
+      ) / totalWeight
+    );
+  }
   if (effect.type === "schedule_active_effect") {
     const duration = Math.min(effect.duration, Math.max(0, monthsLeft - effect.triggerDelay));
     const base = effect.target.includes("income") ? state.baseIncome : state.baseExpense;
@@ -217,6 +237,11 @@ function addActiveEffect(state, effect, eventId, extra = {}) {
     sourceEventId: eventId,
     ...extra,
   });
+}
+
+function scheduledTriggerMonth(state, effect) {
+  const triggerMonth = state.month + effect.triggerDelay;
+  return effect.preserveDelay ? triggerMonth : Math.min(state.maxMonth, triggerMonth);
 }
 
 function applySavingsChange(state, amount, card) {
@@ -256,7 +281,7 @@ function applyEffect(state, effect, card, random) {
     state.scheduled.push({
       id: effect.id || `${card.id}_scheduled`,
       type: "active_effect",
-      triggerMonth: Math.min(state.maxMonth, state.month + effect.triggerDelay),
+      triggerMonth: scheduledTriggerMonth(state, effect),
       target: effect.target,
       amount: effect.amount,
       duration: effect.duration,
@@ -268,8 +293,26 @@ function applyEffect(state, effect, card, random) {
     state.scheduled.push({
       id: effect.id || `${card.id}_scheduled`,
       type: "savings_effect",
-      triggerMonth: Math.min(state.maxMonth, state.month + effect.triggerDelay),
+      triggerMonth: scheduledTriggerMonth(state, effect),
       amount: effect.amount,
+    });
+    return;
+  }
+  if (effect.type === "schedule_savings_by_income_percent") {
+    state.scheduled.push({
+      id: effect.id || `${card.id}_scheduled`,
+      type: "savings_effect",
+      triggerMonth: scheduledTriggerMonth(state, effect),
+      amount: Math.round(state.baseIncome * effect.amount),
+    });
+    return;
+  }
+  if (effect.type === "schedule_random_savings_effect") {
+    state.scheduled.push({
+      id: effect.id || `${card.id}_scheduled`,
+      type: "random_savings_effect",
+      triggerMonth: scheduledTriggerMonth(state, effect),
+      outcomes: effect.outcomes.map((outcome) => ({ ...outcome })),
     });
     return;
   }
@@ -378,6 +421,10 @@ function processEndOfMonth(state, random) {
   state.scheduled.filter((item) => !item.triggered && item.triggerMonth <= state.month).forEach((item) => {
     item.triggered = true;
     if (item.type === "savings_effect") state.savings += item.amount;
+    if (item.type === "random_savings_effect") {
+      const outcome = core.pickWeightedOutcome(item.outcomes, random());
+      if (outcome) state.savings += core.calculateSavingsOutcomeAmount(outcome, state.baseIncome);
+    }
     if (item.type === "active_effect") addActiveEffect(state, { target: item.target, amount: item.amount, duration: item.duration }, item.sourceEventId || item.id);
     if (item.type === "career" && random() < 0.7) addActiveEffect(state, { target: "income", amount: 1500, duration: 12 }, item.id);
   });
@@ -386,6 +433,7 @@ function processEndOfMonth(state, random) {
 function simulateGame(identity, maxMonth, strategy, seed) {
   const random = createRandom(seed);
   const state = {
+    identityId: identity.id,
     baseIncome: identity.income,
     baseExpense: identity.expense,
     savings: identity.savings,
@@ -402,6 +450,7 @@ function simulateGame(identity, maxMonth, strategy, seed) {
     tempExpense: 0,
     eventStress: {},
     repeatedAdjacent: 0,
+    careerEventMonth: randomInt(random, 2, Math.max(2, Math.min(5, maxMonth - 2))),
   };
 
   let completedMonths = 0;
@@ -516,7 +565,7 @@ function buildReport(results) {
     .sort((a, b) => b.average - a.average)
     .slice(0, 10);
 
-  return `# 数值模拟基线\n\n生成时间：${new Date().toISOString()}  \n版本：0.3.0-internal  \n总模拟局数：${results.length.toLocaleString("zh-CN")}  \n每个“身份 × 挑战长度 × 选择倾向”组合：${RUNS_PER_COMBINATION} 局\n\n> 这份报告用于发现异常，不是玩家结果预测。模拟不会改变正式游戏的随机抽卡，也不会自动调整卡池。复杂后续事件按当前规则做了等价计算，最终仍需结合真人试玩判断。\n\n## 总体结果\n\n| 挑战长度 | 选择倾向 | 局数 | 完成率 | 平均完成月份 | 平均最终安全垫 |\n| --- | --- | ---: | ---: | ---: | ---: |\n${summary.map((row) => `| ${row.maxMonth}个月 | ${STRATEGY_LABELS[row.strategy]} | ${row.runs} | ${percent(row.completionRate)} | ${formatNumber(row.averageMonths)} | ${formatNumber(row.averageBuffer)}个月 |`).join("\n")}\n\n## 36个月随机选择：身份差异\n\n| 身份 | 完成率 | 平均完成月份 | 平均最终安全垫 |\n| --- | ---: | ---: | ---: |\n${identityRows.map((row) => `| ${row.name} | ${percent(row.completionRate)} | ${formatNumber(row.averageMonths)} | ${formatNumber(row.averageBuffer)}个月 |`).join("\n")}\n\n## 现金储备被击穿时的最后事件\n\n| 事件 | 次数 |\n| --- | ---: |\n${failureRows.map(([id, count]) => `| ${cardById.get(id)?.title || id} | ${count} |`).join("\n") || "| 暂无 | 0 |"}\n\n“最后事件”不等于唯一原因，它只表示现金储备跌破0时所在的回合。\n\n## 单次抽到的平均负向影响\n\n| 事件 | 平均影响 | 抽到次数 |\n| --- | ---: | ---: |\n${stressRows.map((row) => `| ${cardById.get(row.id)?.title || row.id} | ${Math.round(row.average).toLocaleString("zh-CN")}元 | ${row.draws} |`).join("\n")}\n\n这里比较的是相对于该回合原有现金流的额外影响，不按最坏情况估算。\n\n## 随机性观察\n\n- 相邻两个月抽到同一卡牌的比例：${percent(totalTransitions ? adjacentRepeats / totalTransitions : 0)}。\n- 该数值只做观察，不用于给正式卡池增加强制限制。\n\n## 使用方式\n\n- 重新生成：\`npm run simulate\`\n- 修改身份或卡牌后应重新生成，并比较完成率、失败月份和高冲击事件是否发生异常跳变。\n- 是否调数值，必须同时参考真人测试反馈。\n`;
+  return `# 数值模拟基线\n\n生成时间：${new Date().toISOString()}\n版本：0.3.4-internal\n总模拟局数：${results.length.toLocaleString("zh-CN")}\n每个“身份 × 挑战长度 × 选择倾向”组合：${RUNS_PER_COMBINATION} 局\n\n> 这份报告用于发现异常，不是玩家结果预测。模拟不会改变正式游戏的随机抽卡，也不会自动调整卡池。复杂后续事件按当前规则做了等价计算，最终仍需结合真人试玩判断。\n\n## 总体结果\n\n| 挑战长度 | 选择倾向 | 局数 | 完成率 | 平均完成月份 | 平均最终安全垫 |\n| --- | --- | ---: | ---: | ---: | ---: |\n${summary.map((row) => `| ${row.maxMonth}个月 | ${STRATEGY_LABELS[row.strategy]} | ${row.runs} | ${percent(row.completionRate)} | ${formatNumber(row.averageMonths)} | ${formatNumber(row.averageBuffer)}个月 |`).join("\n")}\n\n## 36个月随机选择：身份差异\n\n| 身份 | 完成率 | 平均完成月份 | 平均最终安全垫 |\n| --- | ---: | ---: | ---: |\n${identityRows.map((row) => `| ${row.name} | ${percent(row.completionRate)} | ${formatNumber(row.averageMonths)} | ${formatNumber(row.averageBuffer)}个月 |`).join("\n")}\n\n## 现金储备被击穿时的最后事件\n\n| 事件 | 次数 |\n| --- | ---: |\n${failureRows.map(([id, count]) => `| ${cardById.get(id)?.title || id} | ${count} |`).join("\n") || "| 暂无 | 0 |"}\n\n“最后事件”不等于唯一原因，它只表示现金储备跌破0时所在的回合。\n\n## 单次抽到的平均负向影响\n\n| 事件 | 平均影响 | 抽到次数 |\n| --- | ---: | ---: |\n${stressRows.map((row) => `| ${cardById.get(row.id)?.title || row.id} | ${Math.round(row.average).toLocaleString("zh-CN")}元 | ${row.draws} |`).join("\n")}\n\n这里比较的是相对于该回合原有现金流的额外影响，不按最坏情况估算。\n\n## 随机性观察\n\n- 相邻两个月抽到同一卡牌的比例：${percent(totalTransitions ? adjacentRepeats / totalTransitions : 0)}。\n- 该数值只做观察，不用于给正式卡池增加强制限制。\n\n## 使用方式\n\n- 重新生成：\`npm run simulate\`\n- 修改身份或卡牌后应重新生成，并比较完成率、失败月份和高冲击事件是否发生异常跳变。\n- 是否调数值，必须同时参考真人测试反馈。\n`;
 }
 
 function main() {

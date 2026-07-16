@@ -20,6 +20,8 @@ const allowedEffectTypes = new Set([
   "add_uncertain_active_effect",
   "schedule_active_effect",
   "schedule_savings_effect",
+  "schedule_savings_by_income_percent",
+  "schedule_random_savings_effect",
   "start_dca_plan",
   "start_protection_plan",
   "career_course_plan",
@@ -38,6 +40,10 @@ function assertPositiveInteger(value, message) {
 function assertRate(value, message, { allowNegative = false } = {}) {
   assert.ok(isFiniteNumber(value), message);
   assert.ok(allowNegative ? value >= -1 && value <= 2 : value >= 0 && value <= 1, message);
+}
+
+function assertOptionalBoolean(value, message) {
+  assert.ok(value === undefined || typeof value === "boolean", message);
 }
 
 function validateEffect(effect, location) {
@@ -87,6 +93,7 @@ function validateEffect(effect, location) {
 
   if (effect.type === "schedule_active_effect") {
     assertPositiveInteger(effect.triggerDelay, `${location}.triggerDelay 必须是正整数`);
+    assertOptionalBoolean(effect.preserveDelay, `${location}.preserveDelay 必须是布尔值`);
     assert.ok(allowedTargets.has(effect.target), `${location}.target 不合法`);
     assert.ok(isFiniteNumber(effect.amount), `${location}.amount 必须是有限数字`);
     assertPositiveInteger(effect.duration, `${location}.duration 必须是正整数`);
@@ -95,7 +102,33 @@ function validateEffect(effect, location) {
 
   if (effect.type === "schedule_savings_effect") {
     assertPositiveInteger(effect.triggerDelay, `${location}.triggerDelay 必须是正整数`);
+    assertOptionalBoolean(effect.preserveDelay, `${location}.preserveDelay 必须是布尔值`);
     assert.ok(isFiniteNumber(effect.amount), `${location}.amount 必须是有限数字`);
+    return;
+  }
+
+  if (effect.type === "schedule_savings_by_income_percent") {
+    assertPositiveInteger(effect.triggerDelay, `${location}.triggerDelay 必须是正整数`);
+    assertOptionalBoolean(effect.preserveDelay, `${location}.preserveDelay 必须是布尔值`);
+    assertRate(effect.amount, `${location}.amount 必须在 0 到 1 之间`);
+    return;
+  }
+
+  if (effect.type === "schedule_random_savings_effect") {
+    assertPositiveInteger(effect.triggerDelay, `${location}.triggerDelay 必须是正整数`);
+    assertOptionalBoolean(effect.preserveDelay, `${location}.preserveDelay 必须是布尔值`);
+    assert.ok(Array.isArray(effect.outcomes) && effect.outcomes.length >= 2, `${location}.outcomes 至少需要两个结果`);
+    effect.outcomes.forEach((outcome, index) => {
+      const outcomeLocation = `${location}.outcomes[${index}]`;
+      assert.ok(isFiniteNumber(outcome.weight) && outcome.weight > 0, `${outcomeLocation}.weight 必须大于 0`);
+      const hasFixedAmount = isFiniteNumber(outcome.amount);
+      const hasIncomePercent = isFiniteNumber(outcome.incomePercent);
+      assert.ok(hasFixedAmount || hasIncomePercent, `${outcomeLocation} 至少需要 amount 或 incomePercent`);
+      if (outcome.incomePercent !== undefined) {
+        assertRate(outcome.incomePercent, `${outcomeLocation}.incomePercent 必须在 0 到 1 之间`);
+      }
+      assert.ok(String(outcome.message || "").trim(), `${outcomeLocation}.message 不能为空`);
+    });
     return;
   }
 
@@ -124,7 +157,7 @@ function validateEffect(effect, location) {
 }
 
 test("事件卡 ID 唯一且基础字段完整", () => {
-  assert.equal(eventCards.length, 56, "事件卡数量发生变化时，请同步审查卡池和测试基线");
+  assert.equal(eventCards.length, 64, "事件卡数量发生变化时，请同步审查卡池和测试基线");
   const ids = new Set();
   eventCards.forEach((card, index) => {
     const location = `eventCards[${index}]`;
@@ -139,19 +172,75 @@ test("事件卡 ID 唯一且基础字段完整", () => {
 
 test("所有事件卡选项和效果都可以被当前规则处理", () => {
   eventCards.forEach((card) => {
-    if (card.category === "choice") {
+    if (Array.isArray(card.choices)) {
       assert.ok(Array.isArray(card.choices) && card.choices.length >= 2, `${card.id} 至少需要两个选项`);
       card.choices.forEach((choice, index) => {
         const location = `${card.id}.choices[${index}]`;
         assert.ok(String(choice.label || "").trim(), `${location}.label 不能为空`);
         assert.ok(String(choice.resultText || "").trim(), `${location}.resultText 不能为空`);
+        assertOptionalBoolean(choice.hideImpact, `${location}.hideImpact 必须是布尔值`);
         validateEffect(choice.effect, `${location}.effect`);
       });
       return;
     }
-    assert.ok(!card.choices, `${card.id} 不是选择卡，不应包含 choices`);
+    assert.notEqual(card.category, "choice", `${card.id} 属于选择事件，但没有 choices`);
     validateEffect(card.effect, `${card.id}.effect`);
   });
+});
+
+test("第一批普通事件选择卡保留约定的金额和后续月份", () => {
+  const byId = (id) => eventCards.find((card) => card.id === id);
+  const convertedIds = ["rent_up", "car_repair", "home_appliance", "project_delay", "sell_unused", "dental_cost"];
+  convertedIds.forEach((id) => assert.equal(byId(id).choices.length >= 2, true, `${id} 应为选择卡`));
+
+  const appliance = byId("home_appliance");
+  assert.equal(appliance.title, "某个家电出现故障");
+  assert.equal(appliance.choices[0].effect.effects[0].amount, -1000);
+  assert.equal(appliance.choices[0].effect.effects[1].triggerDelay, 3);
+  assert.equal(appliance.choices[0].effect.effects[1].amount, -5000);
+  assert.equal(appliance.choices[1].effect.amount, -4000);
+
+  const dental = byId("dental_cost");
+  assert.equal(dental.choices[0].effect.amount, -20000);
+  assert.deepEqual(dental.choices[1].effect, { type: "add_active_effect", target: "expense", amount: 2500, duration: 12 });
+
+  const resale = byId("sell_unused");
+  assert.equal(resale.choices[1].resultText, "两个月后可能收入更多。");
+  assert.equal(resale.choices[1].hideImpact, true);
+  assert.equal(resale.choices[1].effect.triggerDelay, 2);
+  assert.deepEqual(resale.choices[1].effect.outcomes.map((outcome) => outcome.amount), [1800, 600]);
+
+  const rent = byId("rent_up");
+  assert.deepEqual(rent.choices[0].effect, { type: "add_active_effect", target: "expense_percent", amount: 0.05, duration: 999 });
+
+  const delayedBonus = byId("project_delay");
+  assert.equal(delayedBonus.choices[0].effect.triggerDelay, 2);
+  assert.deepEqual(delayedBonus.choices[0].effect.outcomes.map((outcome) => outcome.weight), [0.5, 0.5]);
+  assert.deepEqual(delayedBonus.choices[0].effect.outcomes.map((outcome) => outcome.incomePercent), [0.5, 0.35]);
+  assert.deepEqual(delayedBonus.choices[1].effect, { type: "change_savings_by_income_percent", amount: 0.4 });
+});
+
+test("八张职业事件分别绑定一个有效身份且不会混入其他职业", () => {
+  const identityIds = new Set(identityCards.map((identity) => identity.id));
+  const expectedIdentityIds = [
+    "senior_engineer",
+    "data_analyst",
+    "architect",
+    "doctor",
+    "athlete",
+    "programmer",
+    "home_organizer",
+    "librarian",
+  ];
+  const careerCards = eventCards.filter((card) => Array.isArray(card.careerIdentityIds));
+  assert.equal(careerCards.length, 8);
+  careerCards.forEach((card) => {
+    assert.equal(card.careerIdentityIds.length, 1, `${card.id} 当前只能绑定一个职业身份`);
+    assert.ok(identityIds.has(card.careerIdentityIds[0]), `${card.id} 绑定了不存在的身份`);
+    assert.equal(card.eventLabel, "职业事件");
+    assert.ok(Array.isArray(card.choices) && card.choices.length >= 2, `${card.id} 应提供至少两个选项`);
+  });
+  assert.deepEqual(careerCards.map((card) => card.careerIdentityIds[0]).sort(), expectedIdentityIds.sort());
 });
 
 test("身份卡 ID 唯一且财务字段可用于开局", () => {

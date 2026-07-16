@@ -1,6 +1,6 @@
 {
   "name": "cashflow-life-map",
-  "version": "0.3.2",
+  "version": "0.3.4",
   "private": true,
   "scripts": {
     "dev": "node dev-server.mjs",

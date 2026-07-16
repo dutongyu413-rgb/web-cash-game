@@ -16,9 +16,20 @@ var eventCards = [
     id: "rent_up",
     title: "房租上涨",
     category: "expense_up",
-    description: "房租续约上涨，常规月支出增加约 8%，持续 12 个月。",
-    effect: { type: "add_active_effect", target: "expense_percent", amount: 0.08, duration: 12 },
-    insight: "房租上涨会持续影响月支出。",
+    description: "房租续约时，房东提出租金上涨约 5%。你可以续租，也可以搬家。",
+    choices: [
+      {
+        label: "继续续租",
+        resultText: "接受涨租，常规月支出增加约 5%。",
+        effect: { type: "add_active_effect", target: "expense_percent", amount: 0.05, duration: 999 },
+      },
+      {
+        label: "搬一次家",
+        resultText: "支付搬家和周转费用，避开这次涨租。",
+        effect: { type: "change_savings", amount: -5000 },
+      },
+    ],
+    insight: "房租续约已经处理。",
   },
   {
     id: "parents_support",
@@ -48,9 +59,34 @@ var eventCards = [
     id: "car_repair",
     title: "车辆维修",
     category: "one_time_cost",
-    description: "车子出现故障，需要更换零件和保养，一次性支出 4500 元。",
-    effect: { type: "change_savings", amount: -4500 },
-    insight: "维修费从现金储备里支出。",
+    description: "车子出现故障，可以完整维修，也可以先处理影响使用的关键部件。",
+    choices: [
+      {
+        label: "完整维修",
+        resultText: "一次把这次发现的故障处理完。",
+        effect: { type: "change_savings", amount: -4500 },
+      },
+      {
+        label: "先修关键部件",
+        resultText: "先恢复正常使用，剩余问题以后再处理。",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "change_savings", amount: -1800 },
+            {
+              type: "schedule_savings_effect",
+              id: "car_repair_follow_up",
+              triggerDelay: 4,
+              preserveDelay: true,
+              amount: -3000,
+              title: "车辆再次维修",
+              message: "之前只修了关键部件，剩余故障这次需要处理。",
+            },
+          ],
+        },
+      },
+    ],
+    insight: "车辆故障已经处理。",
   },
   {
     id: "moving_cost",
@@ -62,11 +98,36 @@ var eventCards = [
   },
   {
     id: "home_appliance",
-    title: "家电集中更换",
+    title: "某个家电出现故障",
     category: "one_time_cost",
-    description: "家里几件大件家电集中更换，一次性支出 10000 元。",
-    effect: { type: "change_savings", amount: -10000 },
-    insight: "大件家电集中更换。",
+    description: "家里一台常用家电突然出现故障。现在可以维修，也可以趁政府补贴换新。",
+    choices: [
+      {
+        label: "花 1,000 元维修",
+        resultText: "先把坏掉的家电修好。",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "change_savings", amount: -1000 },
+            {
+              type: "schedule_savings_effect",
+              id: "home_appliance_breaks_again",
+              triggerDelay: 3,
+              preserveDelay: true,
+              amount: -5000,
+              title: "家电又坏了",
+              message: "三个月前维修过的家电再次出现故障，这次需要花 5,000 元换新。",
+            },
+          ],
+        },
+      },
+      {
+        label: "趁补贴购入新家电",
+        resultText: "原价 5,000 元，政府补贴后实际支付 4,000 元。",
+        effect: { type: "change_savings", amount: -4000 },
+      },
+    ],
+    insight: "家电故障已经处理。",
   },
   {
     id: "property_fee_up",
@@ -201,11 +262,43 @@ var eventCards = [
   },
   {
     id: "project_delay",
-    title: "项目延期回款",
+    title: "项目奖金延期",
     category: "income_down",
-    description: "项目延期回款，本月收入减少 50%。",
-    effect: { type: "one_month_income_percent", amount: -0.5 },
-    insight: "本月回款延迟。",
+    description: "一笔相当于月收入 50% 的项目奖金延期发放。你可以继续等待，也可以折价提前结算。",
+    choices: [
+      {
+        label: "等待全部奖金",
+        resultText: "本月暂不到账，两个月后再看回款结果。",
+        hideImpact: true,
+        effect: {
+          type: "schedule_random_savings_effect",
+          id: "project_delay_balance",
+          triggerDelay: 2,
+          preserveDelay: true,
+          title: "延期项目奖金结果",
+          outcomes: [
+            {
+              id: "paid_in_full",
+              weight: 0.5,
+              incomePercent: 0.5,
+              message: "延期的项目奖金全额到账。",
+            },
+            {
+              id: "recovered_after_lawsuit",
+              weight: 0.5,
+              incomePercent: 0.35,
+              message: "项目继续拖欠。支付相当于月收入 15% 的诉讼与材料费用后，追回了全部奖金。",
+            },
+          ],
+        },
+      },
+      {
+        label: "折价提前结算",
+        resultText: "本月立即收到相当于月收入 40% 的奖金，之后不再追讨剩余部分。",
+        effect: { type: "change_savings_by_income_percent", amount: 0.4 },
+      },
+    ],
+    insight: "这笔项目奖金已经处理。",
   },
   {
     id: "temporary_unemployment",
@@ -367,9 +460,41 @@ var eventCards = [
     id: "sell_unused",
     title: "闲置物品卖出",
     category: "positive",
-    description: "你清理闲置物品，现金储备增加 1200 元。",
-    effect: { type: "change_savings", amount: 1200 },
-    insight: "闲置物品已经卖出。",
+    description: "清理出一批闲置物品，可以打包立即卖出，也可以分别挂售。",
+    choices: [
+      {
+        label: "打包立即卖出",
+        resultText: "现在就完成交易。",
+        effect: { type: "change_savings", amount: 1200 },
+      },
+      {
+        label: "分别挂售",
+        resultText: "两个月后可能收入更多。",
+        hideImpact: true,
+        effect: {
+          type: "schedule_random_savings_effect",
+          id: "sell_unused_follow_up",
+          triggerDelay: 2,
+          preserveDelay: true,
+          title: "闲置物品挂售结果",
+          outcomes: [
+            {
+              id: "sold_most",
+              weight: 0.6,
+              amount: 1800,
+              message: "分别挂售的闲置物品大多卖出去了。",
+            },
+            {
+              id: "sold_half",
+              weight: 0.4,
+              amount: 600,
+              message: "两个月后，闲置物品只卖出去一半。",
+            },
+          ],
+        },
+      },
+    ],
+    insight: "闲置物品已经处理。",
   },
   {
     id: "subscription_cleanup",
@@ -429,9 +554,20 @@ var eventCards = [
     id: "dental_cost",
     title: "牙齿治疗",
     category: "health_risk",
-    description: "你进行牙齿治疗，一次性支出 6000 元。",
-    effect: { type: "change_savings", amount: -6000 },
-    insight: "牙齿治疗已经结清。",
+    description: "牙齿治疗方案确定，总费用可以一次支付，也可以按月分期。",
+    choices: [
+      {
+        label: "一次性支付 20,000 元",
+        resultText: "本次治疗费用一次结清。",
+        effect: { type: "change_savings", amount: -20000 },
+      },
+      {
+        label: "分 12 次支付",
+        resultText: "每次支付 2,500 元，共支付 12 次。",
+        effect: { type: "add_active_effect", target: "expense", amount: 2500, duration: 12 },
+      },
+    ],
+    insight: "牙齿治疗付款方式已经确定。",
   },
   {
     id: "insurance_gap",
@@ -764,6 +900,293 @@ var eventCards = [
       },
     ],
     insight: "储备计划选择已经记录。",
+  },
+  {
+    id: "career_senior_engineer_upgrade",
+    title: "核心系统升级",
+    category: "choice",
+    eventLabel: "职业事件",
+    eventMark: "CAREER",
+    careerIdentityIds: ["senior_engineer"],
+    description: "核心系统进入升级窗口，团队问你要不要负责这次改造。",
+    choices: [
+      {
+        label: "负责这次改造",
+        resultText: "本月获得项目奖金，同时增加交通和工作餐支出。",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "one_month_income_percent", amount: 0.2 },
+            { type: "one_month_expense_change", amount: 2500 },
+          ],
+        },
+      },
+      {
+        label: "只做技术支持",
+        resultText: "本月获得一笔技术支持补贴。",
+        effect: { type: "one_month_income_percent", amount: 0.08 },
+      },
+    ],
+    insight: "系统升级工作已经安排。",
+  },
+  {
+    id: "career_data_analyst_model",
+    title: "临时数据项目",
+    category: "choice",
+    eventLabel: "职业事件",
+    eventMark: "CAREER",
+    careerIdentityIds: ["data_analyst"],
+    description: "业务部门临时增加一个数据项目，需要决定这次怎么交付。",
+    choices: [
+      {
+        label: "购买分析工具",
+        resultText: "支付 3,000 元工具费，两个月后开始承接更高价项目。",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "change_savings", amount: -3000 },
+            {
+              type: "schedule_active_effect",
+              id: "data_tool_income",
+              triggerDelay: 2,
+              preserveDelay: true,
+              target: "income",
+              amount: 1500,
+              duration: 6,
+              title: "数据工具开始回本",
+              message: "之前购买的分析工具开始用于新的项目。",
+            },
+          ],
+        },
+      },
+      {
+        label: "沿用现有工具",
+        resultText: "按现有方式完成，本月获得项目补贴。",
+        effect: { type: "one_month_income_percent", amount: 0.08 },
+      },
+    ],
+    insight: "临时数据项目已经处理。",
+  },
+  {
+    id: "career_architect_bid",
+    title: "方案竞标",
+    category: "choice",
+    eventLabel: "职业事件",
+    eventMark: "CAREER",
+    careerIdentityIds: ["architect"],
+    description: "一个新项目公开竞标，模型、效果图和打印费用需要自己先垫付。",
+    choices: [
+      {
+        label: "独立完成竞标",
+        resultText: "先投入 6,000 元，三个月后公布结果。",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "change_savings", amount: -6000 },
+            {
+              type: "schedule_random_savings_effect",
+              id: "architect_bid_result",
+              triggerDelay: 3,
+              preserveDelay: true,
+              title: "竞标结果公布",
+              outcomes: [
+                { id: "won", weight: 0.4, amount: 22000, message: "你独立完成的方案中标，项目首款到账。" },
+                { id: "lost", weight: 0.6, amount: 0, message: "这次方案没有中标。" },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        label: "和同行联合竞标",
+        resultText: "先投入 2,500 元，三个月后结算合作费用。",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "change_savings", amount: -2500 },
+            {
+              type: "schedule_savings_effect",
+              id: "architect_joint_bid_result",
+              triggerDelay: 3,
+              preserveDelay: true,
+              amount: 7000,
+              title: "联合竞标结算",
+              message: "联合竞标项目完成了第一阶段结算。",
+            },
+          ],
+        },
+      },
+    ],
+    insight: "竞标方式已经确定。",
+  },
+  {
+    id: "career_doctor_training",
+    title: "进修名额",
+    category: "choice",
+    eventLabel: "职业事件",
+    eventMark: "CAREER",
+    careerIdentityIds: ["doctor"],
+    description: "科室有一个外院进修名额，也可以继续留院增加门诊排班。",
+    choices: [
+      {
+        label: "自费参加进修",
+        resultText: "支付 12,000 元，三个月后常规月收入增加 2,000 元。",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "change_savings", amount: -12000 },
+            {
+              type: "schedule_active_effect",
+              id: "doctor_training_income",
+              triggerDelay: 3,
+              preserveDelay: true,
+              target: "income",
+              amount: 2000,
+              duration: 12,
+              title: "进修后的新排班",
+              message: "进修结束后，你开始承担新的门诊安排。",
+            },
+          ],
+        },
+      },
+      {
+        label: "留院增加门诊",
+        resultText: "本月门诊增加，收入提高约 15%。",
+        effect: { type: "one_month_income_percent", amount: 0.15 },
+      },
+    ],
+    insight: "这次工作安排已经确定。",
+  },
+  {
+    id: "career_athlete_equipment",
+    title: "赛季装备更新",
+    category: "choice",
+    eventLabel: "职业事件",
+    eventMark: "CAREER",
+    careerIdentityIds: ["athlete"],
+    description: "新赛季开始前，常用训练装备已经出现明显磨损。",
+    choices: [
+      {
+        label: "更换专业装备",
+        resultText: "一次性支付 6,000 元。",
+        effect: { type: "change_savings", amount: -6000 },
+      },
+      {
+        label: "先继续使用",
+        resultText: "暂时继续使用现有装备。",
+        effect: {
+          type: "schedule_savings_effect",
+          id: "athlete_old_equipment_follow_up",
+          triggerDelay: 3,
+          preserveDelay: true,
+          amount: -7500,
+          title: "训练装备需要处理",
+          message: "继续使用的旧装备损坏，需要更换并做一次恢复理疗。",
+        },
+      },
+    ],
+    insight: "赛季装备已经处理。",
+  },
+  {
+    id: "career_programmer_on_call",
+    title: "线上故障值班",
+    category: "choice",
+    eventLabel: "职业事件",
+    eventMark: "CAREER",
+    careerIdentityIds: ["programmer"],
+    description: "产品上线进入值班期，可以独立接下值班，也可以和同事轮值。",
+    choices: [
+      {
+        label: "独立接下值班",
+        resultText: "本月收入增加约 18%，交通和工作餐支出增加 2,400 元。",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "one_month_income_percent", amount: 0.18 },
+            { type: "one_month_expense_change", amount: 2400 },
+          ],
+        },
+      },
+      {
+        label: "和同事轮值",
+        resultText: "本月收入增加约 9%，额外支出增加 600 元。",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "one_month_income_percent", amount: 0.09 },
+            { type: "one_month_expense_change", amount: 600 },
+          ],
+        },
+      },
+    ],
+    insight: "线上值班已经安排。",
+  },
+  {
+    id: "career_home_organizer_order",
+    title: "全屋收纳加单",
+    category: "choice",
+    eventLabel: "职业事件",
+    eventMark: "CAREER",
+    careerIdentityIds: ["home_organizer"],
+    description: "客户临时把局部整理升级为全屋收纳，需要重新安排人手和物料。",
+    choices: [
+      {
+        label: "自己完成全部项目",
+        resultText: "本月收入增加约 25%，物料和交通支出增加 2,500 元。",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "one_month_income_percent", amount: 0.25 },
+            { type: "one_month_expense_change", amount: 2500 },
+          ],
+        },
+      },
+      {
+        label: "找助手一起完成",
+        resultText: "本月收入增加约 18%，助手和物料支出增加 1,000 元。",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "one_month_income_percent", amount: 0.18 },
+            { type: "one_month_expense_change", amount: 1000 },
+          ],
+        },
+      },
+      {
+        label: "只做核心区域",
+        resultText: "本月收入增加约 10%，没有额外支出。",
+        effect: { type: "one_month_income_percent", amount: 0.1 },
+      },
+    ],
+    insight: "这笔加单已经安排。",
+  },
+  {
+    id: "career_librarian_weekend_event",
+    title: "周末阅读活动",
+    category: "choice",
+    eventLabel: "职业事件",
+    eventMark: "CAREER",
+    careerIdentityIds: ["librarian"],
+    description: "图书馆计划增加一场周末阅读活动，需要确定活动形式。",
+    choices: [
+      {
+        label: "自己主持活动",
+        resultText: "本月收入增加约 12%，准备资料支出增加 500 元。",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "one_month_income_percent", amount: 0.12 },
+            { type: "one_month_expense_change", amount: 500 },
+          ],
+        },
+      },
+      {
+        label: "协调外部讲者",
+        resultText: "本月收入增加约 6%，没有额外支出。",
+        effect: { type: "one_month_income_percent", amount: 0.06 },
+      },
+    ],
+    insight: "周末活动已经安排。",
   },
 ];
 

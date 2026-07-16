@@ -31,6 +31,25 @@
     return { state: nextState, value: nextState / 4294967296 };
   }
 
+  function pickWeightedOutcome(outcomes, randomValue) {
+    const available = (Array.isArray(outcomes) ? outcomes : []).filter(
+      (outcome) => Number.isFinite(Number(outcome?.weight)) && Number(outcome.weight) > 0,
+    );
+    if (!available.length) return null;
+    const totalWeight = available.reduce((sum, outcome) => sum + Number(outcome.weight), 0);
+    const normalizedRandom = Math.max(0, Math.min(0.999999999, Number(randomValue) || 0));
+    let cursor = normalizedRandom * totalWeight;
+    for (const outcome of available) {
+      cursor -= Number(outcome.weight);
+      if (cursor < 0) return outcome;
+    }
+    return available[available.length - 1];
+  }
+
+  function calculateSavingsOutcomeAmount(outcome, baseIncome) {
+    return Math.round((Number(outcome?.amount) || 0) + (Number(baseIncome) || 0) * (Number(outcome?.incomePercent) || 0));
+  }
+
   function inferCompletedMonths(saved) {
     if (Number.isFinite(saved.completedMonths)) return saved.completedMonths;
     if (Array.isArray(saved.monthlySnapshots) && saved.monthlySnapshots.length) return saved.monthlySnapshots.length;
@@ -116,6 +135,19 @@
     );
   }
 
+  function getDueCareerEvent(events, { identityId, currentMonth, triggerMonth, drawnEventIds = [] } = {}) {
+    if (!identityId || !Number.isFinite(Number(triggerMonth)) || Number(currentMonth) < Number(triggerMonth)) return null;
+    const drawnIds = new Set(Array.isArray(drawnEventIds) ? drawnEventIds : []);
+    return (
+      (Array.isArray(events) ? events : []).find(
+        (event) =>
+          Array.isArray(event?.careerIdentityIds) &&
+          event.careerIdentityIds.includes(identityId) &&
+          !drawnIds.has(event.id),
+      ) || null
+    );
+  }
+
   function tickDuration(remainingMonths) {
     if (!Number.isFinite(remainingMonths)) return remainingMonths;
     return Math.max(0, remainingMonths - 1);
@@ -135,12 +167,15 @@
     DCA_TIMING,
     normalizeSeed,
     nextSeededRandom,
+    pickWeightedOutcome,
+    calculateSavingsOutcomeAmount,
     migratePlayerState,
     calculateSettlement,
     calculateProtectionChange,
     calculateDcaSale,
     getDcaMilestoneMonth,
     getDueScheduledCards,
+    getDueCareerEvent,
     tickDuration,
     getCurveBuffers,
   };

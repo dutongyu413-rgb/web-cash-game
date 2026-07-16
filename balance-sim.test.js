@@ -19,3 +19,25 @@ test("三种选择倾向都能完成有限且可解释的模拟", () => {
     assert.ok(result.draws.length === result.completedMonths);
   });
 });
+
+test("八种职业身份只会强制触发自己的职业事件", () => {
+  const careerEventByIdentity = {
+    senior_engineer: "career_senior_engineer_upgrade",
+    data_analyst: "career_data_analyst_model",
+    architect: "career_architect_bid",
+    doctor: "career_doctor_training",
+    athlete: "career_athlete_equipment",
+    programmer: "career_programmer_on_call",
+    home_organizer: "career_home_organizer_order",
+    librarian: "career_librarian_weekend_event",
+  };
+  const allCareerEventIds = new Set(Object.values(careerEventByIdentity));
+
+  Object.entries(careerEventByIdentity).forEach(([identityId, expectedEventId]) => {
+    const identity = identities.find((item) => item.id === identityId);
+    const result = simulateGame({ ...identity, savings: 1000000 }, 12, "random", `career-${identityId}`);
+    const careerDraws = result.draws.filter((draw) => allCareerEventIds.has(draw.id));
+    assert.deepEqual(careerDraws.map((draw) => draw.id), [expectedEventId]);
+    assert.ok(careerDraws[0].month >= 2 && careerDraws[0].month <= 5);
+  });
+});

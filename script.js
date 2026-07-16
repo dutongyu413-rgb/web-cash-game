@@ -4,7 +4,7 @@ const toast = document.getElementById("toast");
 const TRACKING_PROJECT = "cash_game";
 const TRACKING_SCRIPT_SRC = "https://cloud.umami.is/script.js";
 const ONBOARDING_STORAGE_KEY = "cashflowLifeMapOnboardingV2";
-const APP_VERSION = "0.3.2-internal";
+const APP_VERSION = "0.3.4-internal";
 const GAME_STATE_VERSION = window.CashGameCore?.GAME_STATE_VERSION || 2;
 const debugParams = new URLSearchParams(window.location.search);
 const debugMode = debugParams.get("debug") === "1" || debugParams.has("seed");
@@ -624,6 +624,7 @@ function getDebugDiagnostic() {
       currentMonth: player.currentMonth,
       completedMonths: getCompletedMonths(),
       maxMonth: player.maxMonth,
+      careerEventMonth: player.careerEventMonth || null,
       gameEnded: Boolean(player.gameEnded),
       endReason: player.endReason || null,
     },
@@ -736,8 +737,8 @@ function showEventCard(event) {
         <strong>第 ${player.currentMonth} 个月</strong>
       </div>
       <div class="event-card-head ${categoryClass(event.category)}">
-        <span>${escapeHtml(categoryLabel(event.category))}</span>
-        <i>${escapeHtml(categoryMark(event.category))}</i>
+        <span>${escapeHtml(event.eventLabel || categoryLabel(event.category))}</span>
+        <i>${escapeHtml(event.eventMark || categoryMark(event.category))}</i>
       </div>
       <div class="event-card-body">
         <h2>${escapeHtml(event.title)}</h2>
@@ -765,7 +766,7 @@ function showEventCard(event) {
                     (choice, index) => `
                       <button class="choice-button ${choiceEffectTone(choice.effect)}" data-action="choose-event" data-event-id="${event.id}" data-choice-index="${index}">
                         <strong class="choice-title">${escapeHtml(choice.label)}</strong>
-                        <span class="choice-impact">${escapeHtml(choiceEffectLine(choice.effect))}</span>
+                        ${choice.hideImpact ? "" : `<span class="choice-impact">${escapeHtml(choiceEffectLine(choice.effect))}</span>`}
                         <span class="choice-note">${escapeHtml(choice.resultText)}</span>
                       </button>
                     `,
@@ -941,6 +942,11 @@ function endMonth(options = {}) {
   processLongTermPlans();
   const recoveryMessages = processActiveEffects();
   player.recoveryMessages = recoveryMessages;
+  settledSummary.savingsAfterMonth = player.savings;
+  settledSummary.savingsDelta = player.savings - settledSummary.savingsBefore;
+  settledSummary.bufferAfterMonth = calculateBuffer();
+  settledSummary.bufferDelta = settledSummary.bufferAfterMonth - settledSummary.bufferBefore;
+  const quickFeedback = options.quick ? createQuickFeedback(settledSummary) : null;
   const scheduledEchoes = processScheduledCards();
   updateLowestSavingsAndBuffer();
   settledSummary.followUps = scheduledEchoes.map((echo) => ({
@@ -975,10 +981,14 @@ function endMonth(options = {}) {
     endReason: player.savings < 0 ? "cash_broken" : player.currentMonth >= player.maxMonth ? "completed" : null,
     nextMonth: player.currentMonth + 1,
     recoveryMessages,
-    quickFeedback: options.quick ? createQuickFeedback(settledSummary) : null,
+    quickFeedback,
   };
   saveGame();
   closeModal();
+  if (player.pendingTransition.quickFeedback) {
+    window.setTimeout(() => showTurnFeedback(player.pendingTransition.quickFeedback, { continueTransition: true }), 120);
+    return;
+  }
   if (player.pendingEchoes.length) {
     window.setTimeout(showNextScheduledEcho, 250);
     return;
@@ -1492,6 +1502,7 @@ function startGame(identity, maxMonth = selectedMaxMonth) {
     debugSeed: debugMode ? debugSeedText : null,
     startedAt: Date.now(),
   };
+  player.careerEventMonth = randomInt(2, Math.max(2, Math.min(5, normalizedMaxMonth - 2)));
   lastDice = null;
   pendingMonthlySummary = null;
   saveGame();
@@ -1505,6 +1516,11 @@ function startGame(identity, maxMonth = selectedMaxMonth) {
   });
   renderGamePage();
   window.setTimeout(maybeStartOnboarding, 380);
+}
+
+function getScheduledTriggerMonth(delay, preserveDelay = false) {
+  const triggerMonth = player.currentMonth + (delay || 1);
+  return preserveDelay ? triggerMonth : Math.min(player.maxMonth, triggerMonth);
 }
 
 function applyEffect(effect, event = null) {
@@ -1587,7 +1603,7 @@ function applyEffect(effect, event = null) {
       type: "active_effect",
       title: effect.title || event?.title || "待生效影响",
       message: effect.message || "之前的选择开始产生后续影响。",
-      triggerMonth: Math.min(player.maxMonth, player.currentMonth + (effect.triggerDelay || 1)),
+      triggerMonth: getScheduledTriggerMonth(effect.triggerDelay, effect.preserveDelay),
       triggered: false,
       activeEffect: {
         name: effect.title || event?.title || "后续影响",
@@ -1606,9 +1622,35 @@ function applyEffect(effect, event = null) {
       type: "savings_effect",
       title: effect.title || event?.title || "后续事件",
       message: effect.message || "之前的选择产生了后续影响。",
-      triggerMonth: Math.min(player.maxMonth, player.currentMonth + (effect.triggerDelay || 1)),
+      triggerMonth: getScheduledTriggerMonth(effect.triggerDelay, effect.preserveDelay),
       triggered: false,
       amount: effect.amount,
+    });
+    return;
+  }
+
+  if (effect.type === "schedule_savings_by_income_percent") {
+    player.scheduledCards.push({
+      id: effect.id || generateId("scheduled_income_savings"),
+      type: "savings_effect",
+      title: effect.title || event?.title || "后续回款",
+      message: effect.message || "之前延期的收入到账了。",
+      triggerMonth: getScheduledTriggerMonth(effect.triggerDelay, effect.preserveDelay),
+      triggered: false,
+      amount: Math.round(player.baseIncome * effect.amount),
+    });
+    return;
+  }
+
+  if (effect.type === "schedule_random_savings_effect") {
+    player.scheduledCards.push({
+      id: effect.id || generateId("scheduled_random_savings"),
+      type: "random_savings_effect",
+      title: effect.title || event?.title || "后续结果",
+      message: effect.message || "之前的选择有了结果。",
+      triggerMonth: getScheduledTriggerMonth(effect.triggerDelay, effect.preserveDelay),
+      triggered: false,
+      outcomes: effect.outcomes.map((outcome) => ({ ...outcome })),
     });
     return;
   }
@@ -1929,6 +1971,25 @@ function resolveScheduledCard(card) {
     };
   }
 
+  if (card.type === "random_savings_effect") {
+    const outcome = window.CashGameCore.pickWeightedOutcome(card.outcomes, randomFloat());
+    if (!outcome) return null;
+    card.outcomeId = outcome.id || null;
+    card.amount = window.CashGameCore.calculateSavingsOutcomeAmount(outcome, player.baseIncome);
+    player.savings += card.amount;
+    recordStress(card.title || "后续事件", Math.max(0, -card.amount), "次");
+
+    return {
+      id: card.id,
+      title: outcome.title || card.title,
+      message: outcome.message || card.message,
+      effectLine: `现金储备 ${formatSignedMoney(card.amount)}。`,
+      savingsDelta: card.amount,
+      savingsAfter: player.savings,
+      bufferAfter: calculateBuffer(),
+    };
+  }
+
   if (card.id !== "career_course_echo") return null;
   const success = randomFloat() < 0.7;
 
@@ -2006,6 +2067,17 @@ function continueScheduledEcho() {
   finishMonthTransition();
 }
 
+function continueAfterTurnFeedback() {
+  if (!player?.pendingTransition) return;
+  player.pendingTransition.quickFeedback = null;
+  saveGame();
+  if (player.pendingEchoes?.length) {
+    window.setTimeout(showNextScheduledEcho, 120);
+    return;
+  }
+  finishMonthTransition();
+}
+
 function finishMonthTransition() {
   const transition = player?.pendingTransition;
   if (!player || !transition) return;
@@ -2026,7 +2098,6 @@ function finishMonthTransition() {
   saveGame();
   closeModal();
   renderGamePage(nextMonthMessage(transition.recoveryMessages || []));
-  if (transition.quickFeedback) showTurnFeedback(transition.quickFeedback);
 }
 
 function createQuickFeedback(summary) {
@@ -2060,7 +2131,7 @@ function createQuickFeedback(summary) {
   };
 }
 
-function showTurnFeedback(feedback) {
+function showTurnFeedback(feedback, options = {}) {
   document.querySelectorAll(".turn-feedback-backdrop").forEach((node) => node.remove());
   const backdrop = document.createElement("div");
   const element = document.createElement("div");
@@ -2106,7 +2177,10 @@ function showTurnFeedback(feedback) {
     if (dismissed) return;
     dismissed = true;
     backdrop.classList.remove("show");
-    window.setTimeout(() => backdrop.remove(), 220);
+    window.setTimeout(() => {
+      backdrop.remove();
+      if (options.continueTransition) continueAfterTurnFeedback();
+    }, 220);
   };
 
   backdrop.addEventListener("click", (event) => {
@@ -2327,7 +2401,7 @@ function getEventCooldown(event) {
   ];
   if (event.group === "interest") return 9;
   if (longCooldownIds.includes(event.id)) return 8;
-  if (event.category === "choice") return 7;
+  if (Array.isArray(event.choices)) return 7;
   if (event.category === "one_time_cost") return 5;
   return 4;
 }
@@ -2370,14 +2444,14 @@ function getEventMaxCount(event) {
   ]);
 
   if (onceIds.has(event.id)) return 1;
-  if (event.category === "choice") return 1;
+  if (Array.isArray(event.choices)) return 1;
   if (event.category === "one_time_cost") return 2;
   if (event.category === "health_risk") return 2;
   return Infinity;
 }
 
 function weightedRandomItem(items) {
-  if (!items.length) return randomItem(eventCards);
+  if (!items.length) return randomItem(eventCards.filter((event) => !isCareerEvent(event)));
   const total = items.reduce((sum, item) => sum + (item.weight || getDefaultWeight(item)), 0);
   let roll = randomFloat() * total;
 
@@ -2403,14 +2477,37 @@ function hasActiveEvent(eventId) {
   return player.activeEffects.some((effect) => effect.sourceEventId === eventId);
 }
 
+function isCareerEvent(event) {
+  return Array.isArray(event?.careerIdentityIds) && event.careerIdentityIds.length > 0;
+}
+
+function getCareerEventTriggerMonth() {
+  if (Number.isFinite(player?.careerEventMonth)) return player.careerEventMonth;
+  player.careerEventMonth = Math.min(4, player.maxMonth);
+  return player.careerEventMonth;
+}
+
+function getDueCareerEvent() {
+  return window.CashGameCore.getDueCareerEvent(eventCards, {
+    identityId: player.identityId,
+    currentMonth: player.currentMonth,
+    triggerMonth: getCareerEventTriggerMonth(),
+    drawnEventIds: (player.eventDrawHistory || []).map((item) => item.id),
+  });
+}
+
 function getEventForCurrentPosition() {
   if (debugMode && debugForcedEventId) {
     const forcedEvent = eventCards.find((event) => event.id === debugForcedEventId);
     debugForcedEventId = null;
     if (forcedEvent) return forcedEvent;
   }
+  const careerEvent = getDueCareerEvent();
+  if (careerEvent) return careerEvent;
   const cell = mapCells[player.position];
-  const pools = cell.categories.flatMap((category) => eventCards.filter((event) => event.category === category));
+  const pools = cell.categories.flatMap((category) =>
+    eventCards.filter((event) => event.category === category && !isCareerEvent(event)),
+  );
   const eligiblePool = pools.filter((event) => {
     if (!isDcaEventAllowed(event)) return false;
     if (!isEventAllowedByFrequency(event)) return false;
@@ -2419,6 +2516,7 @@ function getEventForCurrentPosition() {
   });
   const cooledPool = filterRecentEvents(eligiblePool);
   const fallbackPool = eventCards.filter((event) => {
+    if (isCareerEvent(event)) return false;
     if (!isDcaEventAllowed(event)) return false;
     return isEventAllowedByFrequency(event) && !hasActiveEvent(event.id);
   });
@@ -3120,6 +3218,12 @@ function effectText(effect) {
   if (effect.type === "schedule_savings_effect") {
     return `${effect.triggerDelay || 1} 个月后，现金储备 ${formatSignedMoney(effect.amount)}`;
   }
+  if (effect.type === "schedule_savings_by_income_percent") {
+    return `${effect.triggerDelay || 1} 个月后，现金储备 ${formatSignedMoney(player.baseIncome * effect.amount)}`;
+  }
+  if (effect.type === "schedule_random_savings_effect") {
+    return `${effect.triggerDelay || 1} 个月后结算结果`;
+  }
   if (effect.type === "bonus_invest_or_reserve") return bonusInvestOrReserveText(effect);
   if (effect.type === "invest_or_reserve") return investOrReserveText(effect.amount || 0, effect.investPercent || 0.5);
   if (effect.type === "start_dca_plan") return `每月定投支出 +${effect.monthlyAmount} 元`;
@@ -3161,7 +3265,13 @@ function choiceEffectText(effect) {
     const target = effect.target === "expense" ? "月支出" : "月收入";
     return `${effect.triggerDelay || 1} 个月后，${target} ${formatSignedMoney(effect.amount)}${durationSuffix(effect.duration)}`;
   }
-  if (effect.type === "schedule_savings_effect") return "";
+  if (
+    effect.type === "schedule_savings_effect" ||
+    effect.type === "schedule_savings_by_income_percent" ||
+    effect.type === "schedule_random_savings_effect"
+  ) {
+    return "";
+  }
   if (effect.type === "bonus_invest_or_reserve") return bonusInvestOrReserveText(effect);
   if (effect.type === "invest_or_reserve") return investOrReserveText(effect.amount || 0, effect.investPercent || 0.5);
   if (effect.type === "start_dca_plan") return `月支出 +${currencyFormatter.format(effect.monthlyAmount)} 元`;
@@ -3199,7 +3309,13 @@ function getChoiceEffectScore(effect) {
     return Math.sign(effect.amount || 0);
   }
   if (effect.type === "add_uncertain_active_effect") return Math.sign(effect.amount || 0);
-  if (effect.type === "schedule_savings_effect") return 0;
+  if (
+    effect.type === "schedule_savings_effect" ||
+    effect.type === "schedule_savings_by_income_percent" ||
+    effect.type === "schedule_random_savings_effect"
+  ) {
+    return 0;
+  }
   if (effect.type === "bonus_invest_or_reserve") return 1;
   if (effect.type === "invest_or_reserve") return 1;
   if (effect.type === "start_dca_plan" || effect.type === "start_protection_plan" || effect.type === "career_course_plan" || effect.type === "buy_car") return -1;
@@ -3415,6 +3531,10 @@ function resumeLoadedGame() {
       if (shouldShowDetailedSettlement(pendingMonthlySummary)) showMonthlySummary();
       else endMonth({ quick: true });
     }, 120);
+    return;
+  }
+  if (player.pendingTransition?.quickFeedback) {
+    window.setTimeout(() => showTurnFeedback(player.pendingTransition.quickFeedback, { continueTransition: true }), 120);
     return;
   }
   if (player.pendingEchoes?.length) {
