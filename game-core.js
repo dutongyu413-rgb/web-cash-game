@@ -3,7 +3,7 @@
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (root) root.CashGameCore = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, function createCashGameCore() {
-  const GAME_STATE_VERSION = 2;
+  const GAME_STATE_VERSION = 3;
   const DCA_TIMING = Object.freeze({
     entryWindowEndMonth: 10,
     recoveryDelayMin: 8,
@@ -47,7 +47,13 @@
   }
 
   function calculateSavingsOutcomeAmount(outcome, baseIncome) {
-    return Math.round((Number(outcome?.amount) || 0) + (Number(baseIncome) || 0) * (Number(outcome?.incomePercent) || 0));
+    const income = Number(baseIncome) || 0;
+    return Math.round(
+      (Number(outcome?.amount) || 0) +
+        income * (Number(outcome?.incomePercent) || 0) -
+        income * (Number(outcome?.incomeLossPercent) || 0) -
+        (Number(outcome?.savingsCost) || 0),
+    );
   }
 
   function inferCompletedMonths(saved) {
@@ -79,7 +85,18 @@
       activeEffects: Array.isArray(saved.activeEffects) ? saved.activeEffects : [],
       longTermPlans,
       eventDrawHistory: Array.isArray(saved.eventDrawHistory) ? saved.eventDrawHistory : [],
+      wellbeingPenalty: Math.max(0, Number(saved.wellbeingPenalty) || 0),
+      wellbeingLedger: Array.isArray(saved.wellbeingLedger) ? saved.wellbeingLedger : [],
     };
+  }
+
+  function calculateSurvivalScore({ completedMonths, maxMonth, finalBuffer, savings, wellbeingPenalty = 0 }) {
+    const normalizedMaxMonth = Math.max(1, Number(maxMonth) || 1);
+    const monthScore = (Math.max(0, Number(completedMonths) || 0) / normalizedMaxMonth) * 45;
+    const bufferScore = Math.max(0, Math.min(35, (Number(finalBuffer) || 0) * 6));
+    const savingsScore = Number(savings) > 0 ? 15 : 0;
+    const lifeCost = Math.max(0, Math.min(20, Number(wellbeingPenalty) || 0));
+    return Math.round(Math.max(0, Math.min(100, monthScore + bufferScore + savingsScore + 5 - lifeCost)));
   }
 
   function calculateProtectionChange(amount, plan, eligible) {
@@ -170,6 +187,7 @@
     pickWeightedOutcome,
     calculateSavingsOutcomeAmount,
     migratePlayerState,
+    calculateSurvivalScore,
     calculateSettlement,
     calculateProtectionChange,
     calculateDcaSale,

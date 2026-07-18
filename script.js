@@ -4,8 +4,8 @@ const toast = document.getElementById("toast");
 const TRACKING_PROJECT = "cash_game";
 const TRACKING_SCRIPT_SRC = "https://cloud.umami.is/script.js";
 const ONBOARDING_STORAGE_KEY = "cashflowLifeMapOnboardingV2";
-const APP_VERSION = "0.3.4-internal";
-const GAME_STATE_VERSION = window.CashGameCore?.GAME_STATE_VERSION || 2;
+const APP_VERSION = "0.3.8-internal";
+const GAME_STATE_VERSION = window.CashGameCore?.GAME_STATE_VERSION || 3;
 const debugParams = new URLSearchParams(window.location.search);
 const debugMode = debugParams.get("debug") === "1" || debugParams.has("seed");
 
@@ -13,7 +13,7 @@ let player = null;
 let savedGameAvailable = false;
 let lastDice = null;
 let pendingMonthlySummary = null;
-let selectedMaxMonth = 12;
+let selectedMaxMonth = 24;
 let mapMotion = null;
 let pendingTrackingEvents = [];
 let debugRandomState = window.CashGameCore.normalizeSeed(debugParams.get("seed") || "cash-game-debug");
@@ -31,6 +31,11 @@ const gameVisualAssets = [
 ];
 
 const challengeLengths = [12, 24, 36];
+const challengeLengthNames = {
+  12: "短局",
+  24: "标准局",
+  36: "长局",
+};
 const dcaTiming = window.CashGameCore.DCA_TIMING;
 if (debugMode && challengeLengths.includes(Number(debugParams.get("months")))) {
   selectedMaxMonth = Number(debugParams.get("months"));
@@ -124,6 +129,7 @@ function renderHome() {
         </picture>
         <button class="poster-start-hotspot" data-action="start-game" aria-label="开始游戏"></button>
       </div>
+      <span class="home-version">v${escapeHtml(APP_VERSION.replace("-internal", ""))} · 内测版</span>
       <p class="disclaimer">本游戏仅用于现金流管理和投资者教育场景下的模拟体验，不构成任何投资建议或收益承诺。</p>
     </section>
   `;
@@ -204,7 +210,7 @@ function identityCardHtml(identity) {
   `;
 }
 
-function renderCustomIdentity() {
+function renderCustomIdentity(initialValues = null) {
   app.innerHTML = `
     <section class="screen">
       <div class="page-head">
@@ -217,21 +223,24 @@ function renderCustomIdentity() {
       <form class="identity-card form" id="customForm" novalidate>
         <div class="field">
           <label for="income">月收入</label>
-          <input id="income" name="income" inputmode="numeric" placeholder="例如 18000" />
+          <input id="income" name="income" inputmode="numeric" placeholder="例如 18000" value="${initialValues ? Math.round(initialValues.income || 0) : ""}" />
         </div>
         <div class="field">
           <label for="expense">月支出</label>
-          <input id="expense" name="expense" inputmode="numeric" placeholder="例如 13000" />
+          <input id="expense" name="expense" inputmode="numeric" placeholder="例如 13000" value="${initialValues ? Math.round(initialValues.expense || 0) : ""}" />
         </div>
         <div class="field">
           <label for="savings">当前现金储备</label>
-          <input id="savings" name="savings" inputmode="numeric" placeholder="例如 40000" />
+          <input id="savings" name="savings" inputmode="numeric" placeholder="例如 40000" value="${initialValues ? Math.round(initialValues.savings || 0) : ""}" />
         </div>
         <div class="field">
           <label for="maxMonth">挑战长度</label>
           <select id="maxMonth" name="maxMonth">
             ${challengeLengths
-              .map((months) => `<option value="${months}" ${months === selectedMaxMonth ? "selected" : ""}>${months} 个月</option>`)
+              .map(
+                (months) =>
+                  `<option value="${months}" ${months === selectedMaxMonth ? "selected" : ""}>${challengeLengthNames[months]}（${months}个月）</option>`,
+              )
               .join("")}
           </select>
         </div>
@@ -251,7 +260,8 @@ function challengeLengthHtml() {
           .map(
             (months) => `
               <button class="segment ${months === selectedMaxMonth ? "active" : ""}" data-action="set-length" data-months="${months}">
-                ${months} 个月
+                <strong>${challengeLengthNames[months]}</strong>
+                <small>（${months}个月）</small>
               </button>
             `,
           )
@@ -803,8 +813,11 @@ function confirmEvent(eventId, choiceIndex = null) {
   const before = captureMonthState();
 
   applyEffect(effect, event);
+  const wellbeingImpact = applyChoiceWellbeingCost(choice, event);
   const afterEffect = captureMonthState();
   pendingMonthlySummary = buildMonthlySummary(event, choice, before, afterEffect);
+  pendingMonthlySummary.wellbeingCost = wellbeingImpact?.cost || 0;
+  pendingMonthlySummary.wellbeingReason = wellbeingImpact?.reason || "";
   player.pendingMonthlySummary = pendingMonthlySummary;
   recordEventDraw(event.id);
   trackEvent("cash_game_card_resolved", {
@@ -813,6 +826,7 @@ function confirmEvent(eventId, choiceIndex = null) {
     event_category: event.category,
     has_choice: Boolean(choice),
     choice_index: choice ? Number(choiceIndex) : null,
+    wellbeing_cost: wellbeingImpact?.cost || 0,
     month: player.currentMonth,
   });
   saveGame();
@@ -869,12 +883,12 @@ function showMonthlySummary() {
       <div class="settlement-core">
         <div class="settlement-main-card cashflow-card">
           <span>本月现金流</span>
-          <strong data-animate-number="${summary.monthlyNetCashflow}" data-signed="true">${formatSignedMoney(summary.monthlyNetCashflow)}</strong>
+          <strong>${formatSignedMoney(summary.monthlyNetCashflow)}</strong>
           <small>${summary.monthlyNetCashflow >= 0 ? "净流入" : "净流出"}</small>
         </div>
         <div class="settlement-main-card savings-card">
           <span>现金储备</span>
-          <strong data-animate-number="${summary.savingsAfterMonth}" data-from="${summary.savingsBefore}">${formatMoney(summary.savingsAfterMonth)}</strong>
+          <strong>${formatMoney(summary.savingsAfterMonth)}</strong>
           <small>本月 ${formatSignedMoney(summary.savingsDelta)}</small>
           <div class="settlement-buffer-line"><span>安全垫</span><strong>${formatBuffer(summary.bufferBefore)} → ${formatBuffer(summary.bufferAfterMonth)} 个月</strong></div>
         </div>
@@ -899,7 +913,7 @@ function showMonthlySummary() {
       <button class="button primary" data-action="end-month">${continueLabel}</button>
     </div>
   `);
-  animateSettlementNumbers();
+  animateSettlementCard();
 }
 
 function requestEndGame() {
@@ -1041,6 +1055,7 @@ function renderResultPage() {
   const protectionResult = getProtectionResult();
   const dcaResult = getDcaResult();
   const careerResult = getCareerCourseResult();
+  const wellbeingPenalty = getWellbeingPenalty();
   const rankLabel = player.endReason === "manual" ? "记录" : "等级";
   const resultTrackingEvent =
     player.endReason === "cash_broken"
@@ -1071,8 +1086,12 @@ function renderResultPage() {
         </div>
         <div class="result-score-copy">
           <span class="result-type">${escapeHtml(result.type)}</span>
-          <h1>${score}<small>分</small></h1>
+          <div class="result-score-line">
+            <h1>${score}<small>生存分</small></h1>
+            <button class="result-score-info" data-action="score-info" aria-label="查看生存分说明" title="查看生存分说明">?</button>
+          </div>
           <p>${escapeHtml(result.summary)}</p>
+          <small class="result-score-rule">完成进度 + 财务状态 - 生活体验${wellbeingPenalty ? ` · 本局扣 ${wellbeingPenalty} 分` : ""}</small>
         </div>
       </div>
       ${resultJourneyHtml(finalBuffer)}
@@ -1092,13 +1111,202 @@ function renderResultPage() {
       ${protectionResult ? resultProtectionHtml(protectionResult) : ""}
       ${dcaResult ? resultDcaHtml(dcaResult) : ""}
       ${careerResult ? resultCareerCourseHtml(careerResult) : ""}
-      <div class="actions">
-        <button class="button primary" data-action="restart">再玩一次</button>
-        <button class="button ghost" data-action="random">换一个身份</button>
+      <div class="actions result-actions">
+        <button class="button primary" data-action="feedback">提交试玩反馈</button>
+        <button class="button secondary" data-action="replay-identity">用当前身份再玩</button>
+        <button class="button ghost" data-action="random">换个身份</button>
+        <button class="result-home-link" data-action="restart">返回首页</button>
       </div>
       <p class="disclaimer">本游戏仅用于现金流管理和投资者教育场景下的模拟体验，不构成任何投资建议或收益承诺。游戏中的收入、支出、市场表现和事件结果均为简化模拟。</p>
     </section>
   `;
+}
+
+function showScoreInfo() {
+  const wellbeingPenalty = getWellbeingPenalty();
+  const wellbeingRows = (player.wellbeingLedger || [])
+    .slice(-4)
+    .reverse()
+    .map(
+      (item) => `
+        <div class="score-life-row">
+          <span>第 ${item.month} 个月 · ${escapeHtml(item.choiceLabel)}</span>
+          <strong>-${item.cost} 分</strong>
+          <small>${escapeHtml(item.reason)}</small>
+        </div>
+      `,
+    )
+    .join("");
+  openModal(`
+    <div class="score-info-modal">
+      <h2>生存分怎么计算</h2>
+      <div class="score-rule-list">
+        <div><span>完成进度</span><strong>最高 45 分</strong></div>
+        <div><span>最终安全垫</span><strong>最高 35 分</strong></div>
+        <div><span>现金储备为正</span><strong>15 分</strong></div>
+        <div><span>基础分</span><strong>5 分</strong></div>
+        <div class="is-cost"><span>生活体验</span><strong>-${wellbeingPenalty} 分</strong></div>
+      </div>
+      <p>生活体验扣分来自明确压缩休息、持续降低生活安排或承担高强度工作的选择，单局最多扣 20 分。它不代表消费越多越好。</p>
+      ${wellbeingRows ? `<div class="score-life-list">${wellbeingRows}</div>` : `<p class="score-empty">本局没有记录明显影响生活体验的选择。</p>`}
+      <div class="modal-actions"><button class="button secondary" data-action="close-modal">关闭</button></div>
+    </div>
+  `);
+}
+
+function replayCurrentIdentity() {
+  if (!player) return;
+  selectedMaxMonth = player.maxMonth;
+  const presetIdentity = identityCards.find((identity) => identity.id === player.identityId);
+  if (presetIdentity) {
+    renderRandomIdentity(presetIdentity);
+    return;
+  }
+  renderCustomIdentity({
+    income: player.baseIncome,
+    expense: player.baseExpense,
+    savings: player.initialSavings,
+  });
+}
+
+function getFeedbackContext() {
+  const score = getSurvivalScore();
+  const grade = player.endReason === "manual" ? "阶段" : getResultGrade(score).grade;
+  return {
+    version: APP_VERSION,
+    identity: player.identityId || "custom",
+    identityName: player.identityName || "自定义身份",
+    challengeLength: player.maxMonth,
+    completedMonths: getCompletedMonths(),
+    endReason: player.endReason || "completed",
+    grade,
+    score,
+    wellbeingPenalty: getWellbeingPenalty(),
+    viewport: `${window.innerWidth}x${window.innerHeight}`,
+  };
+}
+
+function openFeedbackEntry() {
+  if (!player) return;
+  const configuredUrl = String(window.CASH_GAME_FEEDBACK_URL || "").trim();
+  const context = getFeedbackContext();
+  trackEvent("cash_game_feedback_opened", {
+    identity_id: context.identity,
+    challenge_length: context.challengeLength,
+    completed_months: context.completedMonths,
+  });
+  if (configuredUrl) {
+    try {
+      const url = new URL(configuredUrl, window.location.href);
+      url.searchParams.set("version", context.version);
+      url.searchParams.set("identity", context.identity);
+      url.searchParams.set("months", String(context.challengeLength));
+      url.searchParams.set("completed", String(context.completedMonths));
+      url.searchParams.set("end", context.endReason);
+      url.searchParams.set("grade", context.grade);
+      window.open(url.toString(), "_blank", "noopener,noreferrer");
+      return;
+    } catch {
+      // 配置错误时回退到本地反馈表，不中断结果页。
+    }
+  }
+
+  openModal(`
+    <div class="feedback-modal">
+      <h2>提交试玩反馈</h2>
+      <p>填写后会调用手机分享；不支持分享时自动复制，方便发送给测试负责人。</p>
+      <form id="feedbackForm" class="feedback-form">
+        <label>这局体验怎么样？
+          <select name="rating" required>
+            <option value="">请选择</option>
+            <option value="5">5分 · 很想再玩</option>
+            <option value="4">4分 · 整体不错</option>
+            <option value="3">3分 · 可以玩完</option>
+            <option value="2">2分 · 有些无聊</option>
+            <option value="1">1分 · 很想退出</option>
+          </select>
+        </label>
+        <label>最需要改进的地方
+          <select name="issue" required>
+            <option value="">请选择</option>
+            <option>操作重复</option>
+            <option>文字太多</option>
+            <option>规则难懂</option>
+            <option>卡牌或数值不合理</option>
+            <option>页面或按钮问题</option>
+            <option>暂时没有明显问题</option>
+          </select>
+        </label>
+        <label>补充说明
+          <textarea name="comment" maxlength="300" rows="4" placeholder="哪一刻想退出？哪个选择让你犹豫？"></textarea>
+        </label>
+        <div class="modal-actions">
+          <button class="button secondary" type="button" data-action="close-modal">取消</button>
+          <button class="button primary" type="submit">发送反馈</button>
+        </div>
+      </form>
+    </div>
+  `);
+}
+
+function buildFeedbackText(formData) {
+  const context = getFeedbackContext();
+  const comment = String(formData.get("comment") || "").trim() || "无";
+  return [
+    "现金流生存游戏试玩反馈",
+    `体验评分：${formData.get("rating")}/5`,
+    `优先问题：${formData.get("issue")}`,
+    `补充说明：${comment}`,
+    "",
+    `版本：${context.version}`,
+    `身份：${context.identityName}`,
+    `挑战：${context.completedMonths}/${context.challengeLength}个月`,
+    `结果：${context.grade} · 生存分${context.score}`,
+    `结束方式：${context.endReason}`,
+    `屏幕：${context.viewport}`,
+  ].join("\n");
+}
+
+async function submitLocalFeedback(form) {
+  const data = new FormData(form);
+  const text = buildFeedbackText(data);
+  trackEvent("cash_game_feedback_prepared", {
+    rating: Number(data.get("rating")) || null,
+    issue: String(data.get("issue") || "unknown"),
+    challenge_length: player.maxMonth,
+  });
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: "现金流生存游戏试玩反馈", text });
+      closeModal();
+      showToast("感谢反馈。");
+      return;
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+    }
+  }
+  await copyTextToClipboard(text);
+  closeModal();
+  showToast("反馈内容已复制，请发送给测试负责人。");
+}
+
+function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text).catch(() => copyTextWithTextarea(text));
+  }
+  return copyTextWithTextarea(text);
+}
+
+function copyTextWithTextarea(text) {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+  return Promise.resolve();
 }
 
 function resultJourneyHtml(finalBuffer) {
@@ -1492,6 +1700,8 @@ function startGame(identity, maxMonth = selectedMaxMonth) {
     pendingMonthlySummary: null,
     monthlySnapshots: [],
     eventDrawHistory: [],
+    wellbeingPenalty: 0,
+    wellbeingLedger: [],
     recoveryMessages: [],
     tempProtectionReduction: 0,
     endReason: null,
@@ -1977,13 +2187,22 @@ function resolveScheduledCard(card) {
     card.outcomeId = outcome.id || null;
     card.amount = window.CashGameCore.calculateSavingsOutcomeAmount(outcome, player.baseIncome);
     player.savings += card.amount;
-    recordStress(card.title || "后续事件", Math.max(0, -card.amount), "次");
+    recordStress(outcome.title || card.title || "后续事件", Math.max(0, -card.amount), "次");
+
+    const incomeLoss = Math.round(player.baseIncome * (Number(outcome.incomeLossPercent) || 0));
+    const savingsCost = Math.round(Number(outcome.savingsCost) || 0);
+    const riskImpactLines = [];
+    if (incomeLoss) riskImpactLines.push(`本月收入 -${formatMoney(incomeLoss)}`);
+    if (savingsCost) riskImpactLines.push(`现金储备 -${formatMoney(savingsCost)}`);
+    const effectLine = riskImpactLines.length
+      ? `${riskImpactLines.join(" · ")}。`
+      : `现金储备 ${formatSignedMoney(card.amount)}。`;
 
     return {
       id: card.id,
       title: outcome.title || card.title,
       message: outcome.message || card.message,
-      effectLine: `现金储备 ${formatSignedMoney(card.amount)}。`,
+      effectLine,
       savingsDelta: card.amount,
       savingsAfter: player.savings,
       bufferAfter: calculateBuffer(),
@@ -2127,6 +2346,8 @@ function createQuickFeedback(summary) {
     impactRows: impactRows.slice(0, 2),
     crossedThreshold: crossedThreshold ?? null,
     protectionReduction: summary.protectionReduction || 0,
+    wellbeingCost: summary.wellbeingCost || 0,
+    wellbeingReason: summary.wellbeingReason || "",
     isCheckpoint,
   };
 }
@@ -2163,6 +2384,11 @@ function showTurnFeedback(feedback, options = {}) {
         ? `<div class="turn-feedback-protection">基础保障生效，本次少花 ${formatMoney(feedback.protectionReduction)}</div>`
         : ""
     }
+    ${
+      feedback.wellbeingCost
+        ? `<div class="turn-feedback-life-cost">生活体验 -${feedback.wellbeingCost} 分 · ${escapeHtml(feedback.wellbeingReason)}</div>`
+        : ""
+    }
     <div class="turn-feedback-footer">
       <div><span>月末现金储备</span><strong>${formatMoney(feedback.savingsAfter)}</strong></div>
       <div><span>安全垫</span><strong>${formatBuffer(feedback.bufferBefore)} → ${formatBuffer(feedback.bufferAfter)} 个月</strong></div>
@@ -2173,8 +2399,9 @@ function showTurnFeedback(feedback, options = {}) {
   document.body.appendChild(backdrop);
 
   let dismissed = false;
+  let readyToDismiss = prefersReducedMotion();
   const dismiss = () => {
-    if (dismissed) return;
+    if (dismissed || !readyToDismiss) return;
     dismissed = true;
     backdrop.classList.remove("show");
     window.setTimeout(() => {
@@ -2186,7 +2413,15 @@ function showTurnFeedback(feedback, options = {}) {
   backdrop.addEventListener("click", (event) => {
     if (event.target === backdrop) dismiss();
   });
-  window.requestAnimationFrame(() => backdrop.classList.add("show"));
+  window.requestAnimationFrame(() => {
+    backdrop.classList.add("show");
+    if (!readyToDismiss) {
+      window.setTimeout(() => {
+        readyToDismiss = true;
+        backdrop.classList.add("is-ready");
+      }, 280);
+    }
+  });
 }
 
 function scheduleCarFollowUps() {
@@ -2380,87 +2615,57 @@ function recordEventDraw(eventId) {
   player.eventDrawHistory = player.eventDrawHistory.slice(-80);
 }
 
-function filterRecentEvents(events) {
-  const history = player.eventDrawHistory || [];
-  return events.filter((event) => {
-    const cooldown = getEventCooldown(event);
-    const lastDraw = [...history].reverse().find((item) => item.id === event.id);
-    if (!lastDraw) return true;
-    return player.currentMonth - lastDraw.month >= cooldown;
-  });
+function applyChoiceWellbeingCost(choice, event) {
+  const cost = Math.max(0, Math.min(6, Number(choice?.wellbeingCost) || 0));
+  if (!cost) return null;
+  const reason = String(choice.wellbeingReason || choice.resultText || "这次选择增加了生活负担").trim();
+  player.wellbeingPenalty = Math.max(0, Number(player.wellbeingPenalty) || 0) + cost;
+  player.wellbeingLedger = Array.isArray(player.wellbeingLedger) ? player.wellbeingLedger : [];
+  const entry = {
+    month: player.currentMonth,
+    eventId: event?.id || null,
+    eventTitle: event?.title || "未命名事件",
+    choiceLabel: choice?.label || "未命名选择",
+    cost,
+    reason,
+  };
+  player.wellbeingLedger.push(entry);
+  return entry;
 }
 
-function getEventCooldown(event) {
-  const longCooldownIds = [
-    "salary_cut",
-    "client_budget_cut",
-    "temporary_unemployment",
-    "elder_hospital",
-    "insurance_gap",
-    "emergency_fund_choice",
-  ];
-  if (event.group === "interest") return 9;
-  if (longCooldownIds.includes(event.id)) return 8;
-  if (Array.isArray(event.choices)) return 7;
-  if (event.category === "one_time_cost") return 5;
-  return 4;
+function getWellbeingPenalty() {
+  return Math.min(20, Math.max(0, Number(player?.wellbeingPenalty) || 0));
 }
 
 function isEventAllowedByFrequency(event) {
-  if (event.group === "interest" && getEventGroupOccurrenceCount("interest") >= 2) return false;
-  const maxCount = getEventMaxCount(event);
-  if (!Number.isFinite(maxCount)) return true;
-  return getEventOccurrenceCount(event.id) < maxCount;
-}
-
-function getEventGroupOccurrenceCount(group) {
-  const groupIds = new Set(eventCards.filter((event) => event.group === group).map((event) => event.id));
-  return (player.eventDrawHistory || []).filter((item) => groupIds.has(item.id)).length;
+  return getEventOccurrenceCount(event.id) === 0;
 }
 
 function getEventOccurrenceCount(eventId) {
   return (player.eventDrawHistory || []).filter((item) => item.id === eventId).length;
 }
 
-function getEventMaxCount(event) {
-  const onceIds = new Set([
-    "home_appliance",
-    "moving_cost",
-    "pipe_leak",
-    "elder_hospital",
-    "insurance_gap",
-    "temporary_unemployment",
-    "index_dca_choice",
-    "career_course",
-    "buy_car_choice",
-    "emergency_fund_choice",
-    "insurance_review_choice",
-    "rent_or_commute_choice",
-    "childcare_cost",
-    "rent_up",
-    "sell_unused",
-    "subscription_cleanup",
-    "deposit_return",
-  ]);
-
-  if (onceIds.has(event.id)) return 1;
-  if (Array.isArray(event.choices)) return 1;
-  if (event.category === "one_time_cost") return 2;
-  if (event.category === "health_risk") return 2;
-  return Infinity;
-}
-
 function weightedRandomItem(items) {
-  if (!items.length) return randomItem(eventCards.filter((event) => !isCareerEvent(event)));
-  const total = items.reduce((sum, item) => sum + (item.weight || getDefaultWeight(item)), 0);
+  if (!items.length) return null;
+  const total = items.reduce((sum, item) => sum + getEventWeight(item), 0);
   let roll = randomFloat() * total;
 
   for (const item of items) {
-    roll -= item.weight || getDefaultWeight(item);
+    roll -= getEventWeight(item);
     if (roll <= 0) return item;
   }
 
   return items[items.length - 1];
+}
+
+function getEventWeight(event) {
+  const baseWeight = Number.isFinite(event.weight) ? event.weight : getDefaultWeight(event);
+  const multiplier = window.CareerEventRules?.getWeightMultiplier(event.id, player?.identityId) || 1;
+  return Math.max(0, baseWeight * multiplier);
+}
+
+function isEventEligibleForIdentity(event) {
+  return window.CareerEventRules?.isEligible(event.id, player?.identityId) ?? true;
 }
 
 function getDefaultWeight(event) {
@@ -2509,18 +2714,19 @@ function getEventForCurrentPosition() {
     eventCards.filter((event) => event.category === category && !isCareerEvent(event)),
   );
   const eligiblePool = pools.filter((event) => {
+    if (!isEventEligibleForIdentity(event)) return false;
     if (!isDcaEventAllowed(event)) return false;
     if (!isEventAllowedByFrequency(event)) return false;
     if (hasActiveEvent(event.id)) return false;
     return true;
   });
-  const cooledPool = filterRecentEvents(eligiblePool);
   const fallbackPool = eventCards.filter((event) => {
     if (isCareerEvent(event)) return false;
+    if (!isEventEligibleForIdentity(event)) return false;
     if (!isDcaEventAllowed(event)) return false;
     return isEventAllowedByFrequency(event) && !hasActiveEvent(event.id);
   });
-  return weightedRandomItem(cooledPool.length ? cooledPool : eligiblePool.length ? eligiblePool : fallbackPool);
+  return weightedRandomItem(eligiblePool.length ? eligiblePool : fallbackPool);
 }
 
 function getEarlyDcaEvent() {
@@ -2808,11 +3014,13 @@ function categoryGlyph(category) {
 }
 
 function getSurvivalScore() {
-  const finalBuffer = calculateBuffer();
-  const monthScore = (getCompletedMonths() / player.maxMonth) * 45;
-  const bufferScore = Math.max(0, Math.min(35, finalBuffer * 6));
-  const savingsScore = player.savings > 0 ? 15 : 0;
-  return Math.round(Math.max(0, Math.min(100, monthScore + bufferScore + savingsScore + 5)));
+  return window.CashGameCore.calculateSurvivalScore({
+    completedMonths: getCompletedMonths(),
+    maxMonth: player.maxMonth,
+    finalBuffer: calculateBuffer(),
+    savings: player.savings,
+    wellbeingPenalty: getWellbeingPenalty(),
+  });
 }
 
 function getResultGrade(score) {
@@ -3398,27 +3606,11 @@ function prefersReducedMotion() {
   return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-function animateSettlementNumbers() {
+function animateSettlementCard() {
   if (prefersReducedMotion()) return;
-  document.querySelectorAll(".modal [data-animate-number]").forEach((element) => {
-    const target = Number(element.dataset.animateNumber);
-    const from = Number(element.dataset.from || 0);
-    const signed = element.dataset.signed === "true";
-    if (!Number.isFinite(target) || !Number.isFinite(from)) return;
-    const startedAt = Date.now();
-    const duration = 620;
-
-    const update = () => {
-      const progress = Math.min(1, (Date.now() - startedAt) / duration);
-      const eased = 1 - (1 - progress) ** 3;
-      const current = Math.round(from + (target - from) * eased);
-      element.textContent = signed ? formatSignedMoney(current) : formatMoney(current);
-      if (progress < 1) window.requestAnimationFrame(update);
-    };
-
-    element.textContent = signed ? formatSignedMoney(from) : formatMoney(from);
-    window.requestAnimationFrame(update);
-  });
+  const card = document.querySelector(".modal .settlement-card");
+  if (!card) return;
+  window.requestAnimationFrame(() => card.classList.add("is-emphasized"));
 }
 
 function randomInt(min, max) {
@@ -3615,6 +3807,12 @@ document.addEventListener("click", (event) => {
     restartGame();
   }
 
+  if (action === "replay-identity") replayCurrentIdentity();
+
+  if (action === "feedback") openFeedbackEntry();
+
+  if (action === "score-info") showScoreInfo();
+
   if (action === "roll") rollDice();
 
   if (action === "confirm-event") confirmEvent(target.dataset.eventId);
@@ -3655,6 +3853,12 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("submit", (event) => {
+  if (event.target.id === "feedbackForm") {
+    event.preventDefault();
+    submitLocalFeedback(event.target).catch(() => showToast("反馈生成失败，请稍后再试。"));
+    return;
+  }
+
   if (event.target.id === "debugStateForm") {
     event.preventDefault();
     if (!debugMode || !player) return;

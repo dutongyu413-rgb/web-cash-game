@@ -44,6 +44,7 @@ test("随机后续金额可以按固定金额或收入比例结算", () => {
   assert.equal(core.calculateSavingsOutcomeAmount({ amount: 1800 }, 20000), 1800);
   assert.equal(core.calculateSavingsOutcomeAmount({ incomePercent: 0.5 }, 20000), 10000);
   assert.equal(core.calculateSavingsOutcomeAmount({ amount: -3000, incomePercent: 0.5 }, 20000), 7000);
+  assert.equal(core.calculateSavingsOutcomeAmount({ incomeLossPercent: 0.25, savingsCost: 5000 }, 28000), -12000);
 });
 
 test("旧存档按已结算月份迁移", () => {
@@ -51,6 +52,15 @@ test("旧存档按已结算月份迁移", () => {
   assert.equal(migrated.completedMonths, 4);
   assert.equal(migrated.stateVersion, core.GAME_STATE_VERSION);
   assert.deepEqual(migrated.monthlySnapshots, []);
+  assert.equal(migrated.wellbeingPenalty, 0);
+  assert.deepEqual(migrated.wellbeingLedger, []);
+});
+
+test("生存分会扣除生活体验分且最多扣20分", () => {
+  const base = { completedMonths: 24, maxMonth: 24, finalBuffer: 6, savings: 100000 };
+  assert.equal(core.calculateSurvivalScore(base), 100);
+  assert.equal(core.calculateSurvivalScore({ ...base, wellbeingPenalty: 7 }), 93);
+  assert.equal(core.calculateSurvivalScore({ ...base, wellbeingPenalty: 99 }), 80);
 });
 
 test("旧定投已赎回状态迁移为全部卖出", () => {

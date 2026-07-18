@@ -230,7 +230,9 @@ var eventCards = [
       },
       {
         label: "先暂停",
-        resultText: "你暂时不续费，本月现金流不变。",
+        resultText: "你暂时不续费，也暂停了原本的运动安排。",
+        wellbeingCost: 2,
+        wellbeingReason: "暂停了原本的运动安排",
         effect: { type: "none" },
       },
     ],
@@ -264,7 +266,7 @@ var eventCards = [
     id: "project_delay",
     title: "项目奖金延期",
     category: "income_down",
-    description: "一笔相当于月收入 50% 的项目奖金延期发放。你可以继续等待，也可以折价提前结算。",
+    description: "一笔相当于月收入 60% 的项目奖金延期发放。你可以继续等待，也可以折价提前结算。",
     choices: [
       {
         label: "等待全部奖金",
@@ -278,16 +280,16 @@ var eventCards = [
           title: "延期项目奖金结果",
           outcomes: [
             {
-              id: "paid_in_full",
-              weight: 0.5,
-              incomePercent: 0.5,
-              message: "延期的项目奖金全额到账。",
-            },
-            {
               id: "recovered_after_lawsuit",
               weight: 0.5,
-              incomePercent: 0.35,
-              message: "项目继续拖欠。支付相当于月收入 15% 的诉讼与材料费用后，追回了全部奖金。",
+              incomePercent: 0.45,
+              message: "支付相当于月收入 15% 的诉讼与材料费后，追回了全部项目奖金。",
+            },
+            {
+              id: "paid_in_full",
+              weight: 0.5,
+              incomePercent: 0.6,
+              message: "项目回款恢复正常，相当于月收入 60% 的奖金到账。",
             },
           ],
         },
@@ -372,7 +374,9 @@ var eventCards = [
     choices: [
       {
         label: "接下这单",
-        resultText: "你接下这单，收入变多，但这个月也多了交通、工具和外包杂费。",
+        resultText: "你接下这单，收入变多，但这个月也多了交通、工具、外包杂费和额外工作时间。",
+        wellbeingCost: 4,
+        wellbeingReason: "副业占用了较多休息时间",
         effect: {
           type: "compound",
           effects: [
@@ -384,6 +388,8 @@ var eventCards = [
       {
         label: "只接小单",
         resultText: "你只接一部分，收入增加一点，节奏也比较可控。",
+        wellbeingCost: 1,
+        wellbeingReason: "小单占用了一部分休息时间",
         effect: { type: "one_month_income_percent", amount: 0.1 },
       },
       {
@@ -434,7 +440,9 @@ var eventCards = [
     choices: [
       {
         label: "接完整单",
-        resultText: "你接下完整兼职，本月收入增加不少，但也多了沟通、交通和交付成本。",
+        resultText: "你接下完整兼职，本月收入增加不少，但也多了沟通、交通、交付成本和额外工作时间。",
+        wellbeingCost: 4,
+        wellbeingReason: "完整兼职明显压缩了休息时间",
         effect: {
           type: "compound",
           effects: [
@@ -446,6 +454,8 @@ var eventCards = [
       {
         label: "只接一部分",
         resultText: "你只接最确定的一部分，本月收入增加，但压力小一些。",
+        wellbeingCost: 1,
+        wellbeingReason: "兼职占用了一部分休息时间",
         effect: { type: "one_month_income_percent", amount: 0.12 },
       },
       {
@@ -527,6 +537,79 @@ var eventCards = [
     description: "你用信用卡积分抵扣账单，本月支出减少 500 元。",
     effect: { type: "one_month_expense_change", amount: -500 },
     insight: "本月账单已经抵扣一部分。",
+  },
+  {
+    id: "athlete_commercial_appearance",
+    title: "商务活动出席",
+    category: "positive",
+    eventLabel: "职业机会",
+    eventMark: "CAREER",
+    weight: 0.9,
+    description: "赛事合作方邀请你参加一场线下商务活动。",
+    choices: [
+      {
+        label: "确认出席",
+        resultText: "本月收入增加约 20%，交通和造型支出增加 800 元，也占用了一部分训练时间。",
+        wellbeingCost: 1,
+        wellbeingReason: "商务活动占用了一部分训练和休息时间",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "one_month_income_percent", amount: 0.2 },
+            { type: "one_month_expense_change", amount: 800 },
+          ],
+        },
+      },
+      {
+        label: "保留训练安排",
+        resultText: "你没有参加这次活动，本月现金流不变。",
+        effect: { type: "none" },
+      },
+    ],
+    insight: "商务活动邀请已经处理。",
+  },
+  {
+    id: "athlete_brand_endorsement",
+    title: "品牌代言邀约",
+    category: "positive",
+    eventLabel: "职业机会",
+    eventMark: "CAREER",
+    weight: 0.45,
+    description: "一个运动品牌邀请你拍摄推广内容并参加新品发布活动。",
+    choices: [
+      {
+        label: "接受完整合作",
+        resultText: "本月收入增加约 45%，拍摄、交通和团队支出增加 2,500 元，行程也明显变满。",
+        wellbeingCost: 2,
+        wellbeingReason: "完整代言合作压缩了训练和休息安排",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "one_month_income_percent", amount: 0.45 },
+            { type: "one_month_expense_change", amount: 2500 },
+          ],
+        },
+      },
+      {
+        label: "只参加发布活动",
+        resultText: "本月收入增加约 18%，交通和造型支出增加 600 元，额外占用半天时间。",
+        wellbeingCost: 1,
+        wellbeingReason: "发布活动占用了少量训练时间",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "one_month_income_percent", amount: 0.18 },
+            { type: "one_month_expense_change", amount: 600 },
+          ],
+        },
+      },
+      {
+        label: "这次不合作",
+        resultText: "你没有接下这次合作，本月现金流不变。",
+        effect: { type: "none" },
+      },
+    ],
+    insight: "品牌邀约已经处理。",
   },
   {
     id: "minor_illness",
@@ -647,6 +730,8 @@ var eventCards = [
       {
         label: "暂时不搬",
         resultText: "你继续承受较长通勤，短期省下房租，但精力被通勤消耗，常规月收入减少 1000 元。",
+        wellbeingCost: 4,
+        wellbeingReason: "较长通勤持续消耗精力",
         effect: { type: "add_active_effect", target: "income", amount: -1000, duration: 999 },
       },
     ],
@@ -666,6 +751,8 @@ var eventCards = [
       {
         label: "暂时推迟",
         resultText: "你保留大部分现金储备，但会在后面安排一次补偿活动。",
+        wellbeingCost: 2,
+        wellbeingReason: "推迟了原本期待的家庭旅行",
         effect: {
           type: "schedule_savings_effect",
           id: "family_trip_makeup",
@@ -721,7 +808,9 @@ var eventCards = [
       },
       {
         label: "先等等",
-        resultText: "你先不报名，现金流暂时不变。",
+        resultText: "你先不报名，也暂时放下了这次兴趣安排。",
+        wellbeingCost: 1,
+        wellbeingReason: "暂时放下了想参加的兴趣安排",
         effect: { type: "none" },
       },
     ],
@@ -832,6 +921,8 @@ var eventCards = [
       {
         label: "先建立现金储备",
         resultText: "你决定先压缩可消费支出 2000 元，持续 6 个月，把安全垫垫厚一点。",
+        wellbeingCost: 4,
+        wellbeingReason: "连续六个月压缩可选消费",
         effect: { type: "add_active_effect", target: "expense", amount: -2000, duration: 6 },
       },
     ],
@@ -891,6 +982,8 @@ var eventCards = [
       {
         label: "开始储备",
         resultText: "你开始压缩可选消费支出，常规月支出减少约 15%，持续 6 个月。",
+        wellbeingCost: 4,
+        wellbeingReason: "连续六个月压缩可选消费",
         effect: { type: "add_active_effect", target: "expense_percent", amount: -0.15, duration: 6 },
       },
       {
@@ -900,6 +993,185 @@ var eventCards = [
       },
     ],
     insight: "储备计划选择已经记录。",
+  },
+  {
+    id: "career_white_collar_project",
+    title: "跨部门项目邀请",
+    category: "choice",
+    eventLabel: "职业事件",
+    eventMark: "CAREER",
+    careerIdentityIds: ["young_worker"],
+    description: "另一个部门邀请你参与一个三个月的重点项目，需要在原有工作之外承担一部分协调任务。",
+    choices: [
+      {
+        label: "接下项目",
+        resultText: "本月增加 800 元协作支出，也占用了一部分休息时间；三个月后获得为期六个月的项目津贴。",
+        wellbeingCost: 3,
+        wellbeingReason: "跨部门项目增加了额外协调工作",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "one_month_expense_change", amount: 800 },
+            {
+              type: "schedule_active_effect",
+              id: "white_collar_project_income",
+              triggerDelay: 3,
+              preserveDelay: true,
+              target: "income_percent",
+              amount: 0.08,
+              duration: 6,
+              title: "跨部门项目进入新阶段",
+              message: "跨部门项目进入新阶段，你开始领取项目津贴。",
+            },
+          ],
+        },
+      },
+      {
+        label: "保持原工作节奏",
+        resultText: "你没有接下额外项目，本月现金流不变。",
+        effect: { type: "none" },
+      },
+    ],
+    insight: "跨部门项目已经安排。",
+  },
+  {
+    id: "career_creator_brand_deal",
+    title: "平台商务合作",
+    category: "choice",
+    eventLabel: "职业事件",
+    eventMark: "CAREER",
+    careerIdentityIds: ["freelancer"],
+    description: "平台转来一笔品牌合作，需要决定这次承接多少内容。",
+    choices: [
+      {
+        label: "接完整合作",
+        resultText: "本月收入增加约 28%，拍摄、道具和外包支出增加 3,200 元，交付周期也排得很满。",
+        wellbeingCost: 4,
+        wellbeingReason: "完整商务合作明显压缩了休息时间",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "one_month_income_percent", amount: 0.28 },
+            { type: "one_month_expense_change", amount: 3200 },
+          ],
+        },
+      },
+      {
+        label: "只接轻量合作",
+        resultText: "本月收入增加约 14%，制作支出增加 800 元，工作量有所增加。",
+        wellbeingCost: 1,
+        wellbeingReason: "轻量合作占用了一部分个人时间",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "one_month_income_percent", amount: 0.14 },
+            { type: "one_month_expense_change", amount: 800 },
+          ],
+        },
+      },
+      {
+        label: "这次不接",
+        resultText: "你没有接下这次合作，本月现金流不变。",
+        effect: { type: "none" },
+      },
+    ],
+    insight: "平台合作已经处理。",
+  },
+  {
+    id: "career_restaurant_equipment",
+    title: "后厨设备升级",
+    category: "choice",
+    eventLabel: "职业事件",
+    eventMark: "CAREER",
+    careerIdentityIds: ["small_shop_owner"],
+    description: "后厨的一台核心设备效率下降，可以直接换新，也可以先维修继续使用。",
+    choices: [
+      {
+        label: "一次更换新设备",
+        resultText: "一次性支付 18,000 元，之后常规月支出减少 1,200 元。",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "change_savings", amount: -18000 },
+            { type: "add_active_effect", target: "expense", amount: -1200, duration: 999 },
+          ],
+        },
+      },
+      {
+        label: "继续维修使用",
+        resultText: "支付 4,000 元维修设备，暂时保留更多现金。",
+        effect: { type: "change_savings", amount: -4000 },
+      },
+    ],
+    insight: "后厨设备已经处理。",
+  },
+  {
+    id: "career_teacher_public_course",
+    title: "公共课程项目",
+    category: "choice",
+    eventLabel: "职业事件",
+    eventMark: "CAREER",
+    careerIdentityIds: ["stable_employee"],
+    description: "学校准备一门面向校外的公共课程，邀请你参与课程设计和授课。",
+    choices: [
+      {
+        label: "接下课程项目",
+        resultText: "本月收入增加约 16%，资料支出增加 600 元，也占用了两个周末。",
+        wellbeingCost: 2,
+        wellbeingReason: "课程准备占用了两个周末",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "one_month_income_percent", amount: 0.16 },
+            { type: "one_month_expense_change", amount: 600 },
+          ],
+        },
+      },
+      {
+        label: "暂不参加",
+        resultText: "你维持原来的教学安排，本月现金流不变。",
+        effect: { type: "none" },
+      },
+    ],
+    insight: "公共课程项目已经安排。",
+  },
+  {
+    id: "career_sales_major_client",
+    title: "大客户订单",
+    category: "choice",
+    eventLabel: "职业事件",
+    eventMark: "CAREER",
+    careerIdentityIds: ["single_parent"],
+    description: "一个大客户准备集中下单，但交付、差旅和售后工作也会明显增加。",
+    choices: [
+      {
+        label: "接下完整订单",
+        resultText: "本月收入增加约 32%，差旅和执行支出增加 3,500 元，工作安排非常紧。",
+        wellbeingCost: 4,
+        wellbeingReason: "完整订单带来了高强度执行压力",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "one_month_income_percent", amount: 0.32 },
+            { type: "one_month_expense_change", amount: 3500 },
+          ],
+        },
+      },
+      {
+        label: "只接部分订单",
+        resultText: "本月收入增加约 16%，执行支出增加 900 元，工作量有所增加。",
+        wellbeingCost: 1,
+        wellbeingReason: "部分订单增加了一部分工作负担",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "one_month_income_percent", amount: 0.16 },
+            { type: "one_month_expense_change", amount: 900 },
+          ],
+        },
+      },
+    ],
+    insight: "大客户订单已经安排。",
   },
   {
     id: "career_senior_engineer_upgrade",
@@ -912,7 +1184,9 @@ var eventCards = [
     choices: [
       {
         label: "负责这次改造",
-        resultText: "本月获得项目奖金，同时增加交通和工作餐支出。",
+        resultText: "本月获得项目奖金，同时增加交通、工作餐支出和一段高强度加班。",
+        wellbeingCost: 3,
+        wellbeingReason: "负责系统改造带来高强度加班",
         effect: {
           type: "compound",
           effects: [
@@ -978,7 +1252,9 @@ var eventCards = [
     choices: [
       {
         label: "独立完成竞标",
-        resultText: "先投入 6,000 元，三个月后公布结果。",
+        resultText: "先投入 6,000 元，并独自承担方案制作，三个月后公布结果。",
+        wellbeingCost: 4,
+        wellbeingReason: "独立竞标占用了大量个人时间",
         effect: {
           type: "compound",
           effects: [
@@ -1030,7 +1306,9 @@ var eventCards = [
     choices: [
       {
         label: "自费参加进修",
-        resultText: "支付 12,000 元，三个月后常规月收入增加 2,000 元。",
+        resultText: "支付 12,000 元，并投入一段额外学习时间；三个月后常规月收入增加 2,000 元。",
+        wellbeingCost: 2,
+        wellbeingReason: "进修占用了一部分休息时间",
         effect: {
           type: "compound",
           effects: [
@@ -1051,7 +1329,9 @@ var eventCards = [
       },
       {
         label: "留院增加门诊",
-        resultText: "本月门诊增加，收入提高约 15%。",
+        resultText: "本月增加门诊排班，收入提高约 15%，休息时间相应减少。",
+        wellbeingCost: 3,
+        wellbeingReason: "增加门诊排班压缩了休息时间",
         effect: { type: "one_month_income_percent", amount: 0.15 },
       },
     ],
@@ -1073,15 +1353,32 @@ var eventCards = [
       },
       {
         label: "先继续使用",
-        resultText: "暂时继续使用现有装备。",
+        resultText: "暂时继续使用已经明显磨损的装备，三个月后可能发生训练意外。",
+        wellbeingCost: 2,
+        wellbeingReason: "继续使用磨损装备增加了训练负担",
         effect: {
-          type: "schedule_savings_effect",
+          type: "schedule_random_savings_effect",
           id: "athlete_old_equipment_follow_up",
           triggerDelay: 3,
           preserveDelay: true,
-          amount: -7500,
-          title: "训练装备需要处理",
-          message: "继续使用的旧装备损坏，需要更换并做一次恢复理疗。",
+          title: "旧装备使用结果",
+          outcomes: [
+            {
+              id: "training_accident",
+              weight: 0.45,
+              title: "训练意外",
+              incomeLossPercent: 0.25,
+              savingsCost: 5000,
+              message: "旧装备在训练中失效，你暂停了一部分训练和比赛，并支付了检查、理疗与更换装备的费用。",
+            },
+            {
+              id: "equipment_held_up",
+              weight: 0.55,
+              amount: 0,
+              title: "旧装备暂时撑住了",
+              message: "这段时间没有发生意外，现金流没有变化。",
+            },
+          ],
         },
       },
     ],
@@ -1098,7 +1395,9 @@ var eventCards = [
     choices: [
       {
         label: "独立接下值班",
-        resultText: "本月收入增加约 18%，交通和工作餐支出增加 2,400 元。",
+        resultText: "本月收入增加约 18%，交通和工作餐支出增加 2,400 元，夜间休息也被频繁打断。",
+        wellbeingCost: 4,
+        wellbeingReason: "独立值班频繁打断夜间休息",
         effect: {
           type: "compound",
           effects: [
@@ -1109,7 +1408,9 @@ var eventCards = [
       },
       {
         label: "和同事轮值",
-        resultText: "本月收入增加约 9%，额外支出增加 600 元。",
+        resultText: "本月收入增加约 9%，额外支出增加 600 元，也占用少量夜间休息。",
+        wellbeingCost: 1,
+        wellbeingReason: "轮值占用了少量夜间休息",
         effect: {
           type: "compound",
           effects: [
@@ -1132,7 +1433,9 @@ var eventCards = [
     choices: [
       {
         label: "自己完成全部项目",
-        resultText: "本月收入增加约 25%，物料和交通支出增加 2,500 元。",
+        resultText: "本月收入增加约 25%，物料和交通支出增加 2,500 元，连续几天都排得很满。",
+        wellbeingCost: 4,
+        wellbeingReason: "独自完成全屋项目造成明显透支",
         effect: {
           type: "compound",
           effects: [
@@ -1143,7 +1446,9 @@ var eventCards = [
       },
       {
         label: "找助手一起完成",
-        resultText: "本月收入增加约 18%，助手和物料支出增加 1,000 元。",
+        resultText: "本月收入增加约 18%，助手和物料支出增加 1,000 元，工作量仍有所增加。",
+        wellbeingCost: 1,
+        wellbeingReason: "加单增加了一部分工作负担",
         effect: {
           type: "compound",
           effects: [
@@ -1171,7 +1476,9 @@ var eventCards = [
     choices: [
       {
         label: "自己主持活动",
-        resultText: "本月收入增加约 12%，准备资料支出增加 500 元。",
+        resultText: "本月收入增加约 12%，准备资料支出增加 500 元，也占用了一个完整周末。",
+        wellbeingCost: 2,
+        wellbeingReason: "主持活动占用了完整周末",
         effect: {
           type: "compound",
           effects: [
