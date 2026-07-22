@@ -4,7 +4,7 @@
 
 var identityCards = [
   { id: "young_worker", name: "企业白领", income: 18000, expense: 13000, savings: 40000 },
-  { id: "freelancer", name: "自媒体博主", income: 22000, expense: 12000, savings: 70000 },
+  { id: "freelancer", name: "自媒体博主", income: 18000, expense: 14000, savings: 50000 },
   { id: "small_shop_owner", name: "餐饮老板", income: 30000, expense: 25000, savings: 100000 },
   { id: "cafe_owner", name: "咖啡主理人", income: 22000, expense: 18000, savings: 70000 },
   { id: "stable_employee", name: "钢琴老师", income: 13000, expense: 8000, savings: 90000 },

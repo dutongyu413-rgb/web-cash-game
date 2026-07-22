@@ -421,6 +421,27 @@
     };
   }
 
+  function isRecurringIncomeBlocked(activeEffects) {
+    return (Array.isArray(activeEffects) ? activeEffects : []).some(
+      (effect) => effect?.blocksRecurringIncome === true || effect?.sourceEventId === "temporary_unemployment",
+    );
+  }
+
+  function calculateRecurringIncome(baseIncome, activeEffects) {
+    if (isRecurringIncomeBlocked(activeEffects)) return 0;
+    const income = (Array.isArray(activeEffects) ? activeEffects : []).reduce((total, effect) => {
+      if (effect?.target === "income") return total + (Number(effect.amount) || 0);
+      if (effect?.target === "income_percent") return total + (Number(baseIncome) || 0) * (Number(effect.amount) || 0);
+      return total;
+    }, Number(baseIncome) || 0);
+    return Math.max(0, Math.round(income));
+  }
+
+  function shouldDeferScheduledCard(card, activeEffects) {
+    const waitsForIncomeRecovery = card?.waitForIncomeRecovery === true || card?.id === "career_course_echo";
+    return waitsForIncomeRecovery && isRecurringIncomeBlocked(activeEffects);
+  }
+
   function calculateDcaSale(holdingPrincipal, ratio, returnRate) {
     const principal = Math.max(0, Math.round(Number(holdingPrincipal) || 0));
     const normalizedRatio = Math.max(0, Math.min(1, Number(ratio) || 0));
@@ -650,6 +671,9 @@
     calculateSurvivalScore,
     calculateSurvivalScoreBreakdown,
     calculateSettlement,
+    isRecurringIncomeBlocked,
+    calculateRecurringIncome,
+    shouldDeferScheduledCard,
     calculateProtectionChange,
     calculateDcaSale,
     calculateFundPurchase,

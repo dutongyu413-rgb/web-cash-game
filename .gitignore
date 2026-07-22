@@ -6,6 +6,10 @@ npm-debug.log*
 .env.*
 !.env.example
 
+# Local editor and agent workspace metadata.
+.codex/
+.agents/
+
 # Original product files stay local unless they are deliberately prepared for release.
 *.pdf
 

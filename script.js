@@ -4,7 +4,7 @@ const toast = document.getElementById("toast");
 const TRACKING_PROJECT = "cash_game";
 const TRACKING_SCRIPT_SRC = "https://cloud.umami.is/script.js";
 const ONBOARDING_STORAGE_KEY = "cashflowLifeMapOnboardingV2";
-const APP_VERSION = "0.4.10-internal";
+const APP_VERSION = "0.4.12-internal";
 const GAME_STATE_VERSION = window.CashGameCore?.GAME_STATE_VERSION || 3;
 const debugParams = new URLSearchParams(window.location.search);
 const debugMode = debugParams.get("debug") === "1" || debugParams.has("seed");
@@ -287,10 +287,8 @@ function renderGamePage(message = "", options = {}) {
   const monthProgress = Math.round((player.currentMonth / player.maxMonth) * 100);
   const reserveChange = pendingMonthlySummary?.savingsDelta || 0;
   const reserveChangeClass = reserveChange > 0 ? "is-rising" : reserveChange < 0 ? "is-falling" : "";
-  const dcaPlan = getDcaPlan();
-  const protectionPlan = getProtectionPlan();
-  const temporaryExpenseEffects = getTemporaryExpenseEffects();
-  const pendingStatuses = getPendingScheduledStatuses();
+  const currentStatuses = getCurrentGameStatuses();
+  const hasCurrentStatuses = currentStatuses.length > 0;
   const currentMapPoint = getJourneyPoint(0);
   const moveBannerHtml = mapMotion
     ? `
@@ -300,50 +298,8 @@ function renderGamePage(message = "", options = {}) {
       </div>
     `
     : "";
-  const activePlanCards = [
-    dcaPlan && shouldShowDcaPlanCard(dcaPlan)
-      ? {
-          title: dcaPlanCardTitle(dcaPlan),
-          meta: dcaPlanStatusLine(dcaPlan),
-          tone: dcaPlan.status === "paused" ? "pending" : "",
-        }
-      : null,
-    protectionPlan
-      ? {
-          title: `正在生效的保障：${protectionPlan.name}`,
-          meta: `每月支出：${formatMoney(protectionPlan.monthlyAmount)} · 剩余 ${protectionPlan.remainingMonths} 个月 · 已减少损失：${formatMoney(protectionPlan.totalReduced || 0)}`,
-        }
-      : null,
-    ...temporaryExpenseEffects.map((effect) => ({
-      title: `临时支出：${effect.name || "持续支出"}`,
-      meta: `每月增加：${formatEffectMonthlyAmount(effect)} · 剩余 ${effect.remainingMonths} 个月`,
-      tone: "expense",
-    })),
-    ...pendingStatuses.map((status) => ({
-      title: `待生效：${status.title}`,
-      meta: status.meta,
-      tone: "pending",
-    })),
-  ].filter(Boolean);
-  const planHtml = activePlanCards.length
-    ? `
-      <div class="plan-strip">
-        ${activePlanCards
-          .map(
-            (plan) => `
-              <div class="plan-item ${plan.tone ? `plan-${plan.tone}` : ""}">
-                <strong>${escapeHtml(plan.title)}</strong>
-                <span>${escapeHtml(plan.meta)}</span>
-              </div>
-            `,
-          )
-          .join("")}
-      </div>
-    `
-    : "";
-
   app.innerHTML = `
-    <section class="screen game-screen">
+    <section class="screen game-screen ${hasCurrentStatuses ? "has-current-status" : ""}">
       <div class="status-bar">
         <div class="hud-progress-row">
           <div class="hud-month">
@@ -408,13 +364,15 @@ function renderGamePage(message = "", options = {}) {
           </div>
         </div>
       </div>
-      ${planHtml}
-      <div class="bottom-bar game-actions">
-        <button class="button primary roll-button ${getCompletedMonths() === 0 && !lastDice ? "is-ready" : ""}" data-action="roll" ${player.gameEnded || mapMotion ? "disabled" : ""}>
-          <span class="dice-face">${lastDice || "?"}</span>
-          掷骰前进
-        </button>
-        <button class="button secondary history-button" data-action="history">人生日志</button>
+      <div class="game-control-deck ${hasCurrentStatuses ? "has-current-status" : ""}">
+        ${currentStatusSummaryHtml(currentStatuses)}
+        <div class="bottom-bar game-actions">
+          <button class="button primary roll-button ${getCompletedMonths() === 0 && !lastDice ? "is-ready" : ""}" data-action="roll" ${player.gameEnded || mapMotion ? "disabled" : ""}>
+            <span class="dice-face">${lastDice || "?"}</span>
+            掷骰前进
+          </button>
+          <button class="button secondary history-button" data-action="history">人生日志</button>
+        </div>
       </div>
       <p class="disclaimer">本游戏仅用于现金流管理和投资者教育场景下的模拟体验，不构成任何投资建议或收益承诺。</p>
     </section>
@@ -1567,8 +1525,7 @@ function resultDcaHtml(result) {
   const actionPreview = getInvestmentActionPreview(result.actions);
   return `
     <div class="result-special-card dca-result-card">
-      <span>投资阶段结论</span>
-      <strong>${escapeHtml(result.label)}</strong>
+      <h2>投资日志</h2>
       <div class="dca-result-metrics">
         ${metrics
           .map(
@@ -2233,6 +2190,7 @@ function applyEffect(effect, event = null) {
       amount: effect.amount,
       remainingMonths: effect.duration,
       sourceEventId: event?.id || null,
+      blocksRecurringIncome: effect.blocksRecurringIncome === true,
     });
     return;
   }
@@ -2364,6 +2322,7 @@ function applyEffect(effect, event = null) {
       id: "career_course_echo",
       triggerMonth: Math.min(player.maxMonth, player.currentMonth + randomInt(3, 5)),
       triggered: false,
+      waitForIncomeRecovery: true,
     });
     return;
   }
@@ -2462,6 +2421,7 @@ function calculateCurrentIncome() {
 
 function calculateSettlementIncome() {
   if (!player) return 0;
+  if (window.CashGameCore.isRecurringIncomeBlocked(player.activeEffects)) return 0;
   let income = calculateRecurringIncome();
 
   income += player.tempIncomeChange || 0;
@@ -2485,14 +2445,7 @@ function calculateSettlementExpense() {
 
 function calculateRecurringIncome() {
   if (!player) return 0;
-  let income = player.baseIncome;
-
-  player.activeEffects.forEach((effect) => {
-    if (effect.target === "income") income += effect.amount;
-    if (effect.target === "income_percent") income += player.baseIncome * effect.amount;
-  });
-
-  return Math.max(0, Math.round(income));
+  return window.CashGameCore.calculateRecurringIncome(player.baseIncome, player.activeEffects);
 }
 
 function calculateRecurringExpense() {
@@ -2579,6 +2532,11 @@ function processScheduledCards() {
   const echoes = [];
   const dueCards = window.CashGameCore.getDueScheduledCards(player.scheduledCards, player.currentMonth);
   dueCards.forEach((card) => {
+    if (window.CashGameCore.shouldDeferScheduledCard(card, player.activeEffects)) {
+      card.triggerMonth = player.currentMonth + 1;
+      card.deferredByIncomeBlock = true;
+      return;
+    }
     card.triggered = true;
     card.resolvedMonth = player.currentMonth;
     const echo = resolveScheduledCard(card);
@@ -3344,6 +3302,7 @@ function getWellbeingPenalty() {
 }
 
 function isEventAllowedByFrequency(event) {
+  if (event.enabled === false) return false;
   return getEventOccurrenceCount(event.id) === 0;
 }
 
@@ -4030,6 +3989,156 @@ function shouldShowDcaPlanCard(plan) {
   return getDcaHoldingPrincipal(plan) > 0 || getInvestmentDcaStatus(plan) === "active";
 }
 
+function currentStatusInvestment(plan) {
+  if (!shouldShowDcaPlanCard(plan)) return null;
+  const dcaStatus = getInvestmentDcaStatus(plan);
+  const holdingValue = getDcaHoldingValue(plan);
+  const monthlyAmount = Math.max(0, Number(plan.monthlyDcaAmount ?? plan.monthlyAmount) || 0);
+  const statusText = investmentPlanStatusText(plan);
+  const summaryMeta = dcaStatus === "active"
+    ? `每月投入 ${formatMoney(monthlyAmount)} · 持仓 ${formatMoney(holdingValue)}`
+    : `持仓 ${formatMoney(holdingValue)} · ${statusText}`;
+  return {
+    type: "investment",
+    group: "投资",
+    icon: "投",
+    title: dcaPlanCardTitle(plan),
+    summaryMeta,
+    detailMeta: `净值 ${Number(plan.nav || 3).toFixed(2)} 元 · ${summaryMeta} · 阶段收益率 ${formatPercent(getDcaCurrentReturnRate(plan))}`,
+    impact: Number.POSITIVE_INFINITY,
+  };
+}
+
+function currentStatusProtection(plan) {
+  if (!plan) return null;
+  return {
+    type: "protection",
+    group: "保障",
+    icon: "保",
+    title: "基础保障生效中",
+    summaryMeta: `剩余 ${plan.remainingMonths} 个月 · 累计少花 ${formatMoney(plan.totalReduced || 0)}`,
+    detailMeta: `每月支出 ${formatMoney(plan.monthlyAmount)} · 剩余 ${plan.remainingMonths} 个月 · 累计少花 ${formatMoney(plan.totalReduced || 0)}`,
+    impact: Number.POSITIVE_INFINITY,
+  };
+}
+
+function currentEffectImpact(effect) {
+  const base = effect.target?.startsWith("income") ? player.baseIncome : player.baseExpense;
+  return Math.abs(effect.target?.endsWith("_percent") ? base * effect.amount : effect.amount);
+}
+
+function currentEffectMeta(effect) {
+  const target = effect.target?.startsWith("income") ? "月收入" : "月支出";
+  const amount = effect.target?.endsWith("_percent") ? formatPercent(effect.amount) : formatSignedMoney(effect.amount);
+  const duration = effect.uncertain ? "结束时间未定" : `剩余 ${effect.remainingMonths} 个月`;
+  return `${target} ${amount} · ${duration}`;
+}
+
+function getOtherCurrentStatuses() {
+  if (!player) return [];
+  return player.activeEffects
+    .filter((effect) => {
+      if (effect.sourcePlanId) return false;
+      if (effect.uncertain) return true;
+      return Number.isFinite(effect.remainingMonths) && effect.remainingMonths > 0 && effect.remainingMonths < 120;
+    })
+    .map((effect) => ({
+      type: "other",
+      group: "其他影响",
+      icon: effect.target?.startsWith("income") ? "收" : "支",
+      title: effect.name || "持续影响",
+      summaryMeta: currentEffectMeta(effect),
+      detailMeta: currentEffectMeta(effect),
+      impact: currentEffectImpact(effect),
+    }))
+    .sort((first, second) => second.impact - first.impact);
+}
+
+function getCurrentGameStatuses() {
+  const investment = currentStatusInvestment(getDcaPlan());
+  const protection = currentStatusProtection(getProtectionPlan());
+  return [investment, protection, ...getOtherCurrentStatuses()].filter(Boolean);
+}
+
+function currentStatusSummaryHtml(statuses) {
+  if (!statuses.length) return "";
+  const primary = statuses[0];
+  const indicators = statuses
+    .slice(0, 3)
+    .map((status) => `<i class="current-status-dot status-${status.type}" title="${escapeHtml(status.group)}"></i>`)
+    .join("");
+  return `
+    <button class="current-status-summary" data-action="current-statuses" aria-label="查看全部当前状态，共 ${statuses.length} 项">
+      <span class="current-status-summary-head">
+        <span>当前状态 <b>${statuses.length}</b></span>
+        <span>查看全部 <i aria-hidden="true">⌃</i></span>
+      </span>
+      <span class="current-status-summary-main">
+        <span class="current-status-mark status-${primary.type}" aria-hidden="true">${primary.icon}</span>
+        <span class="current-status-copy">
+          <strong>${escapeHtml(primary.title)}</strong>
+          <small>${escapeHtml(primary.summaryMeta)}</small>
+        </span>
+        <span class="current-status-indicators" aria-hidden="true">${indicators}</span>
+      </span>
+    </button>
+  `;
+}
+
+function renderCurrentStatuses() {
+  const statuses = getCurrentGameStatuses();
+  if (!statuses.length) {
+    showToast("当前没有正在生效的状态。");
+    return;
+  }
+  const groupOrder = ["投资", "保障", "其他影响"];
+  const groupsHtml = groupOrder
+    .map((group) => {
+      const items = statuses.filter((status) => status.group === group);
+      if (!items.length) return "";
+      return `
+        <section class="current-status-group">
+          <h3>${group}</h3>
+          <div class="current-status-list">
+            ${items
+              .map(
+                (status) => `
+                  <div class="current-status-row">
+                    <span class="current-status-mark status-${status.type}" aria-hidden="true">${status.icon}</span>
+                    <span>
+                      <strong>${escapeHtml(status.title)}</strong>
+                      <small>${escapeHtml(status.detailMeta)}</small>
+                    </span>
+                  </div>
+                `,
+              )
+              .join("")}
+          </div>
+        </section>
+      `;
+    })
+    .join("");
+  trackEvent("cash_game_current_status_opened", {
+    month: player.currentMonth,
+    challenge_length: player.maxMonth,
+    status_count: statuses.length,
+    has_investment: statuses.some((status) => status.type === "investment"),
+    has_protection: statuses.some((status) => status.type === "protection"),
+  });
+  openModal(
+    `
+      <div class="current-status-sheet">
+        <header class="current-status-sheet-head">
+          <div><span>本局状态</span><h2>当前状态 <b>${statuses.length}</b></h2></div>
+          <button class="current-status-close" data-action="close-modal" aria-label="关闭当前状态">×</button>
+        </header>
+        <div class="current-status-sheet-body">${groupsHtml}</div>
+      </div>
+    `,
+    "current-status-backdrop",
+  );
+}
+
 function dcaPlanCardTitle(plan) {
   if (getInvestmentDcaStatus(plan) !== "active") return `投资持仓：${plan.fundName || plan.name}`;
   return `正在定投：${plan.fundName || plan.name}`;
@@ -4237,19 +4346,6 @@ function getDcaResultLabel(plan) {
   return "仍在持有";
 }
 
-function dcaPlanStatusLine(plan) {
-  const parts = [
-    `净值：${Number(plan.nav || 3).toFixed(2)} 元`,
-    `持仓：${formatMoney(getDcaHoldingValue(plan))}`,
-    `每月投入：${formatMoney(plan.monthlyDcaAmount ?? plan.monthlyAmount)}`,
-    `当前状态：${investmentPlanStatusText(plan)}`,
-  ];
-
-  if ((plan.realizedAmount || 0) > 0) parts.push(`卖出回款：${formatMoney(plan.realizedAmount)}`);
-  if ((plan.totalInvested || 0) > 0) parts.push(`阶段收益率：${formatPercent(getDcaCurrentReturnRate(plan))}`);
-  return parts.join(" · ");
-}
-
 function getProtectionPlan() {
   return player?.longTermPlans?.find((plan) => plan.id === "basic_protection_001" && plan.status === "active");
 }
@@ -4258,51 +4354,12 @@ function getAnyProtectionPlan() {
   return player?.longTermPlans?.find((plan) => plan.id === "basic_protection_001");
 }
 
-function getTemporaryExpenseEffects() {
-  if (!player) return [];
-  return player.activeEffects.filter((effect) => {
-    if (!["expense", "expense_percent"].includes(effect.target) || effect.amount <= 0) return false;
-    if (effect.sourcePlanId) return false;
-    return Number.isFinite(effect.remainingMonths) && effect.remainingMonths > 0 && effect.remainingMonths <= 12;
-  });
-}
-
-function formatEffectMonthlyAmount(effect) {
-  if (effect.target?.endsWith("_percent")) return formatPercent(effect.amount);
-  return formatMoney(effect.amount);
-}
-
 function formatActiveEffectLine(effect, prefix = "常规月") {
   const target = effect?.target?.startsWith("expense") ? "支出" : "收入";
   const amount = effect?.target?.endsWith("_percent")
     ? formatPercent(effect.amount)
     : formatSignedMoney(effect.amount);
   return `${prefix}${target} ${amount}${durationSuffix(effect.duration)}`;
-}
-
-function getPendingScheduledStatuses() {
-  if (!player) return [];
-  return (player.scheduledCards || [])
-    .filter((card) => !card.triggered && card.showPendingStatus)
-    .map((card) => {
-      const remaining = Math.max(1, card.triggerMonth - player.currentMonth);
-      if (card.id === "career_course_echo") {
-        return {
-          title: "职业提升课程",
-          meta: `${remaining} 个月后可能出现收入提升机会`,
-        };
-      }
-      if (card.type === "savings_effect") {
-        return {
-          title: card.title || "后续事件",
-          meta: `${remaining} 个月后生效 · 现金储备 ${formatSignedMoney(card.amount || 0)}`,
-        };
-      }
-      return {
-        title: card.title || "待生效影响",
-        meta: `${remaining} 个月后生效 · ${formatActiveEffectLine(card.activeEffect, "常规月")}`,
-      };
-    });
 }
 
 function removeDcaMonthlyEffect() {
@@ -4807,6 +4864,8 @@ document.addEventListener("click", (event) => {
   if (action === "end-month") endMonth();
 
   if (action === "history") renderHistory();
+
+  if (action === "current-statuses") renderCurrentStatuses();
 
   if (action === "investment-history") renderInvestmentHistory();
 

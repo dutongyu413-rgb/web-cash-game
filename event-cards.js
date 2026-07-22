@@ -307,7 +307,13 @@ var eventCards = [
     title: "短期失业",
     category: "income_down",
     description: "从本月起暂时没有工作收入，收入归零，持续 2 个月。",
-    effect: { type: "add_active_effect", target: "income_percent", amount: -1, duration: 2 },
+    effect: {
+      type: "add_active_effect",
+      target: "income_percent",
+      amount: -1,
+      duration: 2,
+      blocksRecurringIncome: true,
+    },
     insight: "短期收入中断。",
   },
   {
@@ -951,6 +957,7 @@ var eventCards = [
     id: "emergency_fund_choice",
     title: "建立应急储备计划",
     category: "choice",
+    enabled: false,
     description: "你决定是否从这个月开始，压缩一部分可选消费支出作为应急储备。",
     choices: [
       {
@@ -1019,26 +1026,26 @@ var eventCards = [
     choices: [
       {
         label: "接完整合作",
-        resultText: "本月收入增加约 28%，拍摄、道具和外包支出增加 3,200 元，交付周期也排得很满。",
+        resultText: "本月收入增加约 40%，拍摄、道具和外包支出增加 3,200 元，交付周期也排得很满。",
         wellbeingCost: 4,
         wellbeingReason: "完整商务合作明显压缩了休息时间",
         effect: {
           type: "compound",
           effects: [
-            { type: "one_month_income_percent", amount: 0.28 },
+            { type: "one_month_income_percent", amount: 0.4 },
             { type: "one_month_expense_change", amount: 3200 },
           ],
         },
       },
       {
         label: "只接轻量合作",
-        resultText: "本月收入增加约 14%，制作支出增加 800 元，工作量有所增加。",
+        resultText: "本月收入增加约 20%，制作支出增加 800 元，工作量有所增加。",
         wellbeingCost: 1,
         wellbeingReason: "轻量合作占用了一部分个人时间",
         effect: {
           type: "compound",
           effects: [
-            { type: "one_month_income_percent", amount: 0.14 },
+            { type: "one_month_income_percent", amount: 0.2 },
             { type: "one_month_expense_change", amount: 800 },
           ],
         },

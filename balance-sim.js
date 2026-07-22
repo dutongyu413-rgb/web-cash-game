@@ -91,6 +91,7 @@ function eventCount(state, eventId) {
 }
 
 function eventAllowed(state, event) {
+  if (event.enabled === false) return false;
   if (Array.isArray(event.careerIdentityIds) && !event.careerIdentityIds.includes(state.identityId)) return false;
   if (!careerEventRules.isEligible(event.id, state.identityId)) return false;
   if (eventCount(state, event.id) >= 1) return false;
@@ -123,17 +124,7 @@ function drawEvent(state, random) {
 }
 
 function recurringIncome(state) {
-  return Math.max(
-    0,
-    Math.round(
-      state.baseIncome +
-        state.activeEffects.reduce((sum, effect) => {
-          if (effect.target === "income") return sum + effect.amount;
-          if (effect.target === "income_percent") return sum + state.baseIncome * effect.amount;
-          return sum;
-        }, 0),
-    ),
-  );
+  return core.calculateRecurringIncome(state.baseIncome, state.activeEffects);
 }
 
 function recurringExpense(state) {
@@ -213,6 +204,7 @@ function addActiveEffect(state, effect, eventId, extra = {}) {
     amount: effect.amount,
     remainingMonths: effect.duration,
     sourceEventId: eventId,
+    blocksRecurringIncome: effect.blocksRecurringIncome === true,
     ...extra,
   });
 }
@@ -328,7 +320,12 @@ function applyEffect(state, effect, card, random) {
   }
   if (effect.type === "career_course_plan") {
     state.savings -= effect.cost;
-    state.scheduled.push({ id: "career_course_echo", type: "career", triggerMonth: Math.min(state.maxMonth, state.month + randomInt(random, 3, 5)) });
+    state.scheduled.push({
+      id: "career_course_echo",
+      type: "career",
+      triggerMonth: Math.min(state.maxMonth, state.month + randomInt(random, 3, 5)),
+      waitForIncomeRecovery: true,
+    });
     return;
   }
   if (effect.type === "buy_car") {
@@ -518,6 +515,11 @@ function processEndOfMonth(state, random) {
     .filter((effect) => (effect.uncertain ? !effect.recovered : effect.remainingMonths > 0));
 
   state.scheduled.filter((item) => !item.triggered && item.triggerMonth <= state.month).forEach((item) => {
+    if (core.shouldDeferScheduledCard(item, state.activeEffects)) {
+      item.triggerMonth = state.month + 1;
+      item.deferredByIncomeBlock = true;
+      return;
+    }
     item.triggered = true;
     if (item.type === "savings_effect") state.savings += item.amount;
     if (item.type === "random_savings_effect") {
@@ -726,7 +728,7 @@ function buildReport(results) {
   return `# 数值模拟基线
 
 生成时间：${new Date().toISOString()}
-版本：0.4.10-internal
+版本：0.4.12-internal
 总模拟局数：${results.length.toLocaleString("zh-CN")}
 每个“身份 × 挑战长度 × 选择倾向”组合：${RUNS_PER_COMBINATION} 局
 

@@ -28,6 +28,13 @@ test("同一局不会重复抽到同一张主事件卡", () => {
   assert.equal(new Set(eventIds).size, eventIds.length);
 });
 
+test("暂时隐藏的事件不会进入正式模拟卡池", () => {
+  for (let run = 0; run < 40; run += 1) {
+    const result = simulateGame({ ...identities[0], savings: 1000000 }, 36, "random", `disabled-card-${run}`);
+    assert.equal(result.draws.some((draw) => draw.id === "emergency_fund_choice"), false);
+  }
+});
+
 test("短局市场报价仍保留随机性且不占用主事件", () => {
   const identity = { ...identities[0], savings: 1000000 };
   const results = Array.from({ length: 60 }, (_, run) =>

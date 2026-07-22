@@ -98,6 +98,28 @@ test("随机后续金额可以按固定金额或收入比例结算", () => {
   assert.equal(core.calculateSavingsOutcomeAmount({ incomeLossPercent: 0.25, savingsCost: 5000 }, 28000), -12000);
 });
 
+test("收入中断优先于加薪和课程收入", () => {
+  const effects = [
+    { target: "income", amount: 1500, sourceEventId: "career_course_echo" },
+    {
+      target: "income_percent",
+      amount: -1,
+      sourceEventId: "temporary_unemployment",
+      blocksRecurringIncome: true,
+    },
+  ];
+  assert.equal(core.isRecurringIncomeBlocked(effects), true);
+  assert.equal(core.calculateRecurringIncome(18000, effects), 0);
+  assert.equal(core.calculateRecurringIncome(18000, effects.slice(0, 1)), 19500);
+});
+
+test("课程回响在收入恢复前顺延", () => {
+  const courseEcho = { id: "career_course_echo", waitForIncomeRecovery: true };
+  const unemployment = [{ sourceEventId: "temporary_unemployment", blocksRecurringIncome: true }];
+  assert.equal(core.shouldDeferScheduledCard(courseEcho, unemployment), true);
+  assert.equal(core.shouldDeferScheduledCard(courseEcho, []), false);
+});
+
 test("旧存档按已结算月份迁移", () => {
   const migrated = core.migratePlayerState({ currentMonth: 5, maxMonth: 12, baseExpense: 8000 });
   assert.equal(migrated.completedMonths, 4);

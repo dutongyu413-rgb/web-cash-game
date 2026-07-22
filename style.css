@@ -2759,6 +2759,13 @@ button {
   color: var(--blue);
 }
 
+.dca-result-card > h2 {
+  margin: 0 0 2px;
+  color: var(--ink);
+  font-size: 19px;
+  line-height: 1.25;
+}
+
 .dca-result-metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -5298,6 +5305,337 @@ strong {
 .game-screen .plan-item + .plan-item {
   padding-top: 14px;
   border-top: 1px solid rgba(82, 66, 45, 0.12);
+}
+
+/* Map page: one fixed control deck for current states and primary actions. */
+.game-control-deck {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  z-index: 15;
+  display: grid;
+  width: min(100vw, 430px);
+  gap: 8px;
+  padding: 10px 18px max(12px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  border-top: 1px solid rgba(82, 66, 45, 0.1);
+  background: rgba(247, 241, 228, 0.96);
+  box-shadow: 0 -10px 28px rgba(94, 73, 45, 0.11);
+  backdrop-filter: blur(14px);
+}
+
+.game-control-deck .bottom-bar.game-actions {
+  position: static;
+  left: auto;
+  bottom: auto;
+  width: auto;
+  margin: 0;
+  padding: 0;
+  transform: none;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.screen.game-screen.has-current-status {
+  padding-bottom: calc(184px + env(safe-area-inset-bottom));
+}
+
+.current-status-summary {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 7px;
+  padding: 10px 12px;
+  color: var(--text-main);
+  text-align: left;
+  border: 1px solid rgba(82, 66, 45, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 253, 247, 0.96);
+  box-shadow: 0 6px 16px rgba(94, 73, 45, 0.08);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.current-status-summary:active {
+  transform: translateY(1px);
+}
+
+.current-status-summary:focus-visible,
+.current-status-close:focus-visible {
+  outline: 3px solid rgba(242, 118, 46, 0.25);
+  outline-offset: 2px;
+}
+
+.current-status-summary-head,
+.current-status-summary-main {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.current-status-summary-head {
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-sub);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.current-status-summary-head > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-main);
+}
+
+.current-status-summary-head b,
+.current-status-sheet-head b {
+  display: inline-grid;
+  min-width: 22px;
+  height: 22px;
+  place-items: center;
+  padding: 0 6px;
+  color: #FFFFFF;
+  font-size: 11px;
+  border-radius: 999px;
+  background: var(--orange);
+}
+
+.current-status-summary-head > span:last-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.current-status-summary-head i {
+  color: var(--orange-deep);
+  font-size: 14px;
+  font-style: normal;
+}
+
+.current-status-summary-main {
+  gap: 9px;
+}
+
+.current-status-mark {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  color: #FFFFFF;
+  font-size: 13px;
+  font-weight: 900;
+  border-radius: 50%;
+  box-shadow: 0 5px 12px rgba(94, 73, 45, 0.14);
+}
+
+.current-status-mark.status-investment {
+  background: var(--yellow);
+  color: #6D4C0A;
+}
+
+.current-status-mark.status-protection {
+  background: var(--green);
+}
+
+.current-status-mark.status-other {
+  background: var(--orange);
+}
+
+.current-status-copy,
+.current-status-row > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.current-status-copy {
+  flex: 1 1 auto;
+}
+
+.current-status-copy strong,
+.current-status-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.current-status-copy strong {
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.current-status-copy small {
+  color: var(--text-sub);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.current-status-indicators {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+}
+
+.current-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--orange);
+}
+
+.current-status-dot.status-investment {
+  background: var(--yellow);
+}
+
+.current-status-dot.status-protection {
+  background: var(--green);
+}
+
+.current-status-backdrop {
+  z-index: 35;
+  padding: 0;
+  background: rgba(34, 28, 22, 0.48);
+  backdrop-filter: blur(2px);
+}
+
+.current-status-backdrop .modal {
+  display: flex;
+  width: min(100%, 430px);
+  max-height: min(72svh, 640px);
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 24px 24px 0 0;
+  background: var(--card);
+  box-shadow: 0 -18px 50px rgba(29, 21, 13, 0.24);
+}
+
+.current-status-sheet {
+  display: flex;
+  width: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.current-status-sheet::before {
+  width: 42px;
+  height: 4px;
+  margin: 9px auto 2px;
+  border-radius: 999px;
+  background: rgba(82, 66, 45, 0.18);
+  content: "";
+}
+
+.current-status-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 15px 20px 14px;
+  border-bottom: 1px solid rgba(82, 66, 45, 0.1);
+}
+
+.current-status-sheet-head > div {
+  display: grid;
+  gap: 3px;
+}
+
+.current-status-sheet-head span {
+  color: var(--text-sub);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.current-status-sheet-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 22px;
+}
+
+.current-status-close {
+  display: grid;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  color: var(--text-sub);
+  font-size: 25px;
+  line-height: 1;
+  border: 1px solid rgba(82, 66, 45, 0.1);
+  border-radius: 50%;
+  background: var(--bg-soft);
+  cursor: pointer;
+}
+
+.current-status-sheet-body {
+  display: grid;
+  min-height: 0;
+  gap: 20px;
+  padding: 16px 20px max(24px, env(safe-area-inset-bottom));
+  overflow-y: auto;
+}
+
+.current-status-group {
+  display: grid;
+  gap: 4px;
+}
+
+.current-status-group h3 {
+  margin: 0;
+  padding-bottom: 7px;
+  color: var(--text-sub);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.current-status-list {
+  display: grid;
+}
+
+.current-status-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 11px;
+  align-items: center;
+  padding: 12px 0;
+}
+
+.current-status-row + .current-status-row {
+  border-top: 1px solid rgba(82, 66, 45, 0.1);
+}
+
+.current-status-row strong {
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.current-status-row small {
+  color: var(--text-sub);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+@media (max-width: 360px) {
+  .game-control-deck {
+    padding-inline: 12px;
+  }
+
+  .screen.game-screen.has-current-status {
+    padding-bottom: calc(180px + env(safe-area-inset-bottom));
+  }
+
+  .current-status-indicators {
+    display: none;
+  }
 }
 
 .toast {

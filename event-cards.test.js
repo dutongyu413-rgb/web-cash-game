@@ -78,6 +78,7 @@ function validateEffect(effect, location) {
     assert.ok(allowedTargets.has(effect.target), `${location}.target 不合法`);
     assert.ok(isFiniteNumber(effect.amount), `${location}.amount 必须是有限数字`);
     assertPositiveInteger(effect.duration, `${location}.duration 必须是正整数`);
+    assertOptionalBoolean(effect.blocksRecurringIncome, `${location}.blocksRecurringIncome 必须是布尔值`);
     return;
   }
 
@@ -276,6 +277,28 @@ test("第一批普通事件选择卡保留约定的金额和后续月份", () =>
   assert.deepEqual(delayedBonus.choices[0].effect.outcomes.map((outcome) => outcome.weight), [0.5, 0.5]);
   assert.deepEqual(delayedBonus.choices[0].effect.outcomes.map((outcome) => outcome.incomePercent), [0.45, 0.6]);
   assert.deepEqual(delayedBonus.choices[1].effect, { type: "change_savings_by_income_percent", amount: 0.4 });
+});
+
+test("应急储备计划暂不进入正式卡池", () => {
+  const card = eventCards.find((event) => event.id === "emergency_fund_choice");
+  assert.equal(card.enabled, false);
+});
+
+test("短期失业会锁定常规收入", () => {
+  const card = eventCards.find((event) => event.id === "temporary_unemployment");
+  assert.equal(card.effect.blocksRecurringIncome, true);
+  assert.equal(card.effect.duration, 2);
+});
+
+test("自媒体博主使用收支接近的新初始数据", () => {
+  const identity = identityCards.find((item) => item.id === "freelancer");
+  const careerCard = eventCards.find((card) => card.id === "career_creator_brand_deal");
+  assert.deepEqual(
+    { income: identity.income, expense: identity.expense, savings: identity.savings },
+    { income: 18000, expense: 14000, savings: 50000 },
+  );
+  assert.equal(careerCard.choices[0].effect.effects[0].amount, 0.4);
+  assert.equal(careerCard.choices[1].effect.effects[0].amount, 0.2);
 });
 
 test("市场先生报价已从普通事件卡池中拆出", () => {
