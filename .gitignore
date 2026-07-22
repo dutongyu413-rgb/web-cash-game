@@ -2,14 +2,19 @@
 node_modules/
 npm-debug.log*
 *.log
+.env
+.env.*
+!.env.example
 
-# Keep source markdown docs public; keep original PDFs local unless explicitly needed.
+# Original product files stay local unless they are deliberately prepared for release.
 *.pdf
 
-# Local publishing and future-design notes; keep them out of the public test repo.
+# Personal publishing and analytics notes.
 GitHub-Pages长期链接发布指南.md
-INVESTMENT_NET_VALUE_V2.md
 使用Umami追踪网页访问与用户行为指南.md
+
+# Internal product design, testing, balancing, and release notes.
+INVESTMENT_NET_VALUE_V2.md
 CARD_OPTIMIZATION_PLAN.md
 CAREER_EVENT_WEIGHT_PLAN.md
 INTERNAL_TEST_GUIDE.md
@@ -17,3 +22,12 @@ NEXT_OPTIMIZATION_ROADMAP.md
 WHEEL_EVENT_SYSTEM_PLAN.md
 BALANCE_BASELINE.md
 GITHUB_PUBLISH_CHECKLIST.md
+
+# Local QA output and debug exports.
+test-results/
+playwright-report/
+screenshots/
+diagnostics/
+debug-*.json
+feedback-*.csv
+*.local.md

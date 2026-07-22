@@ -4,21 +4,24 @@ const toast = document.getElementById("toast");
 const TRACKING_PROJECT = "cash_game";
 const TRACKING_SCRIPT_SRC = "https://cloud.umami.is/script.js";
 const ONBOARDING_STORAGE_KEY = "cashflowLifeMapOnboardingV2";
-const APP_VERSION = "0.3.8-internal";
+const APP_VERSION = "0.4.10-internal";
 const GAME_STATE_VERSION = window.CashGameCore?.GAME_STATE_VERSION || 3;
 const debugParams = new URLSearchParams(window.location.search);
 const debugMode = debugParams.get("debug") === "1" || debugParams.has("seed");
+const DEFAULT_CHALLENGE_LENGTH = 24;
 
 let player = null;
 let savedGameAvailable = false;
 let lastDice = null;
 let pendingMonthlySummary = null;
-let selectedMaxMonth = 24;
+let selectedMaxMonth = DEFAULT_CHALLENGE_LENGTH;
 let mapMotion = null;
 let pendingTrackingEvents = [];
 let debugRandomState = window.CashGameCore.normalizeSeed(debugParams.get("seed") || "cash-game-debug");
 let debugSeedText = debugParams.get("seed") || "cash-game-debug";
-let debugForcedEventId = debugParams.get("event") || null;
+const debugEventParam = debugParams.get("event") || null;
+let debugForcedMarketQuote = debugParams.get("market") === "1" || debugEventParam === "index_dca_choice";
+let debugForcedEventId = debugEventParam === "index_dca_choice" ? null : debugEventParam;
 let onboardingStep = 0;
 let onboardingManual = false;
 let eventRevealTimer = null;
@@ -36,7 +39,7 @@ const challengeLengthNames = {
   24: "标准局",
   36: "长局",
 };
-const dcaTiming = window.CashGameCore.DCA_TIMING;
+const investmentTiming = window.CashGameCore.INVESTMENT_TIMING;
 if (debugMode && challengeLengths.includes(Number(debugParams.get("months")))) {
   selectedMaxMonth = Number(debugParams.get("months"));
 }
@@ -381,6 +384,7 @@ function renderGamePage(message = "", options = {}) {
             <source type="image/webp" srcset="assets/life-map-paper.webp" />
             <img class="life-map-background" src="assets/life-map-paper.png" width="744" height="760" alt="" decoding="async" fetchpriority="high" />
           </picture>
+          ${marketMisterButtonHtml()}
           ${moveBannerHtml}
           <div class="map-card-stack" aria-hidden="true">
             <i></i>
@@ -416,7 +420,6 @@ function renderGamePage(message = "", options = {}) {
     </section>
   `;
 
-  if (!options.skipEcho) maybeTriggerDcaMarketEvent();
 }
 
 function rollDice() {
@@ -610,6 +613,7 @@ function renderDebugPanel() {
         ${currentEvent ? `<small>已指定：${escapeHtml(currentEvent.title)}。下一次掷骰时触发。</small>` : ""}
       </form>
       <div class="debug-tools">
+        <button class="button ghost" data-action="debug-market">下月触发市场先生</button>
         <button class="button ghost" data-action="debug-copy">复制测试诊断</button>
         <button class="button ghost" data-action="debug-reset-onboarding">重置新手引导</button>
       </div>
@@ -629,6 +633,7 @@ function getDebugDiagnostic() {
     seed: debugSeedText,
     randomState: player.randomState ?? debugRandomState,
     forcedEventId: debugForcedEventId,
+    forcedMarketQuote: debugForcedMarketQuote,
     identity: { id: player.identityId, name: player.identityName },
     challenge: {
       currentMonth: player.currentMonth,
@@ -660,6 +665,19 @@ function getDebugDiagnostic() {
       startMonth: plan.startMonth,
       remainingMonths: plan.remainingMonths ?? null,
     })),
+    investment: player.investment
+      ? {
+          status: player.investment.status,
+          holdingStatus: getInvestmentHoldingStatus(player.investment),
+          dcaStatus: getInvestmentDcaStatus(player.investment),
+          entryMode: player.investment.entryMode || null,
+          nav: Number(player.investment.nav || 0),
+          shares: Number(player.investment.shares || 0),
+          holdingPrincipal: Math.round(player.investment.holdingPrincipal || 0),
+          totalInvested: Math.round(player.investment.totalInvested || 0),
+          monthlyDcaAmount: Math.round(player.investment.monthlyDcaAmount || 0),
+        }
+      : null,
     recentDraws: (player.eventDrawHistory || []).slice(-12),
     recentHistory: (player.history || []).slice(-8).map((item) => ({
       month: item.month,
@@ -858,10 +876,17 @@ function showMonthlySummary() {
     summary.tempIncomeDelta ? ["临时收入影响", formatSignedMoney(summary.tempIncomeDelta), ""] : null,
     summary.tempExpenseDelta ? ["临时支出影响", formatSignedMoney(summary.tempExpenseDelta), ""] : null,
     summary.reserveDelta ? ["一次性储备变动", formatSignedMoney(summary.reserveDelta), ""] : null,
+    summary.investmentContribution ? ["投资投入", formatSignedMoney(-summary.investmentContribution), ""] : null,
+    summary.investmentContributionSkipped ? ["本月定投", `现金不足，未投入 ${formatMoney(summary.investmentContributionSkipped)}`, ""] : null,
   ].filter(Boolean);
   const protectionActualLoss = Math.max(0, -(summary.reserveDelta || 0));
   const protectionOriginalLoss = protectionActualLoss + (summary.protectionReduction || 0);
-  const continueLabel = player.currentMonth >= player.maxMonth || summary.savingsAfterMonth < 0 ? "查看本局结果" : "继续前进";
+  const canRescueCash = summary.savingsAfterMonth < 0 && getCashRescueOptions(summary.savingsAfterMonth).eligible;
+  const continueLabel = canRescueCash
+    ? "处理现金缺口"
+    : player.currentMonth >= player.maxMonth || summary.savingsAfterMonth < 0
+      ? "查看本局结果"
+      : "继续前进";
   const detailRowsHtml = detailRows.length
     ? `
       <div class="settlement-details">
@@ -975,6 +1000,7 @@ function endMonth(options = {}) {
   settledSummary.bufferDelta = settledSummary.bufferAfterMonth - settledSummary.bufferBefore;
   player.completedMonths = player.currentMonth;
   addMonthlySnapshot(settledSummary, scheduledEchoes);
+  advanceMarketToMonth(player.currentMonth);
   player.tempIncomeChange = 0;
   player.tempIncomePercent = 0;
   player.tempExpenseChange = 0;
@@ -991,11 +1017,19 @@ function endMonth(options = {}) {
   });
 
   player.pendingEchoes = scheduledEchoes;
+  const endReason = player.savings < 0 ? "cash_broken" : player.currentMonth >= player.maxMonth ? "completed" : null;
+  const cashRescue = endReason === "cash_broken" ? createPendingCashRescue() : null;
+  if (endReason === "cash_broken" && cashRescue?.hasHolding && !cashRescue.eligible) {
+    recordUnavailableCashRescue(cashRescue);
+  }
   player.pendingTransition = {
-    endReason: player.savings < 0 ? "cash_broken" : player.currentMonth >= player.maxMonth ? "completed" : null,
+    endReason,
     nextMonth: player.currentMonth + 1,
     recoveryMessages,
     quickFeedback,
+    cashRescue: cashRescue?.eligible ? cashRescue : null,
+    marketQuoteDue: shouldQueueMarketQuote(endReason),
+    marketQuoteHandled: false,
   };
   saveGame();
   closeModal();
@@ -1007,7 +1041,7 @@ function endMonth(options = {}) {
     window.setTimeout(showNextScheduledEcho, 250);
     return;
   }
-  finishMonthTransition();
+  showPendingMarketQuoteOrFinish();
 }
 
 function renderHistory() {
@@ -1015,33 +1049,61 @@ function renderHistory() {
     // 记录：玩家打开人生日志，用于判断历史回放是否有人使用。
     month: player.currentMonth,
     challenge_length: player.maxMonth,
+    from_screen: player.gameEnded ? "result" : "game",
   });
-  const rows = player.history.length
-    ? player.history
-        .map(
-          (item) => `
-            <div class="history-row ${getHistoryTone(item)}">
-              <span class="history-dot"></span>
-              <div class="history-main">
-                <strong>第 ${item.month} 个月 · ${escapeHtml(item.eventTitle)}</strong>
-                <span>${escapeHtml(getHistorySummary(item))}</span>
-              </div>
-              <div class="history-meta">
-                ${formatMoney(item.savingsAfter)}<br>${formatBuffer(item.bufferAfter)} 个月
-              </div>
-            </div>
-          `,
-        )
-        .join("")
+  const history = Array.isArray(player.history) ? player.history : [];
+  const rows = history.length
+    ? history.map((item) => historyRowHtml(item)).join("")
     : `<div class="empty-state">还没有历史事件。掷一次骰子，人生地图就会开始记录。</div>`;
 
   openModal(`
-    <h2>人生日志</h2>
-    <div class="history-list">${rows}</div>
-    <div class="modal-actions">
-      <button class="button secondary" data-action="close-modal">关闭</button>
+    <div class="history-modal">
+      <div class="history-modal-head">
+        <div>
+          <span>本局回顾</span>
+          <h2>人生日志</h2>
+        </div>
+        <strong>${history.length} 条记录</strong>
+      </div>
+      <div class="history-list">${rows}</div>
+      <div class="modal-actions history-modal-actions">
+        <button class="button secondary" data-action="close-modal">关闭</button>
+      </div>
     </div>
-  `);
+  `, "history-backdrop");
+}
+
+function historyRowHtml(item, compact = false) {
+  return `
+    <div class="history-row ${compact ? "is-compact" : ""} ${getHistoryTone(item)}">
+      <span class="history-dot"></span>
+      <div class="history-main">
+        <strong>第 ${item.month} 个月 · ${escapeHtml(item.eventTitle)}</strong>
+        <span>${escapeHtml(getHistorySummary(item))}</span>
+      </div>
+      <div class="history-meta">
+        ${formatMoney(item.savingsAfter)}<br>${formatBuffer(item.bufferAfter)} 个月
+      </div>
+    </div>
+  `;
+}
+
+function resultHistoryHtml() {
+  const history = Array.isArray(player.history) ? player.history : [];
+  if (!history.length) return "";
+  const preview = history.slice(-3).map((item) => historyRowHtml(item, true)).join("");
+  return `
+    <section class="result-history-card" aria-labelledby="result-history-title">
+      <div class="result-history-head">
+        <div>
+          <span>本局回顾</span>
+          <h2 id="result-history-title">人生日志</h2>
+        </div>
+        <button type="button" data-action="history">查看全部 ${history.length} 条</button>
+      </div>
+      <div class="result-history-preview">${preview}</div>
+    </section>
+  `;
 }
 
 function renderResultPage() {
@@ -1085,6 +1147,7 @@ function renderResultPage() {
           <span>${rankLabel}</span>
         </div>
         <div class="result-score-copy">
+          <span class="result-identity">本局身份 <strong>${escapeHtml(player.identityName)}</strong></span>
           <span class="result-type">${escapeHtml(result.type)}</span>
           <div class="result-score-line">
             <h1>${score}<small>生存分</small></h1>
@@ -1111,6 +1174,7 @@ function renderResultPage() {
       ${protectionResult ? resultProtectionHtml(protectionResult) : ""}
       ${dcaResult ? resultDcaHtml(dcaResult) : ""}
       ${careerResult ? resultCareerCourseHtml(careerResult) : ""}
+      ${resultHistoryHtml()}
       <div class="actions result-actions">
         <button class="button primary" data-action="feedback">提交试玩反馈</button>
         <button class="button secondary" data-action="replay-identity">用当前身份再玩</button>
@@ -1123,7 +1187,8 @@ function renderResultPage() {
 }
 
 function showScoreInfo() {
-  const wellbeingPenalty = getWellbeingPenalty();
+  const breakdown = getSurvivalScoreBreakdown();
+  const wellbeingPenalty = breakdown.wellbeingPenalty;
   const wellbeingRows = (player.wellbeingLedger || [])
     .slice(-4)
     .reverse()
@@ -1141,11 +1206,16 @@ function showScoreInfo() {
     <div class="score-info-modal">
       <h2>生存分怎么计算</h2>
       <div class="score-rule-list">
-        <div><span>完成进度</span><strong>最高 45 分</strong></div>
-        <div><span>最终安全垫</span><strong>最高 35 分</strong></div>
-        <div><span>现金储备为正</span><strong>15 分</strong></div>
-        <div><span>基础分</span><strong>5 分</strong></div>
-        <div class="is-cost"><span>生活体验</span><strong>-${wellbeingPenalty} 分</strong></div>
+        <div><span>完成进度</span><strong>${breakdown.monthScore} / 45 分</strong></div>
+        <div><span>最终安全垫</span><strong>${breakdown.finalBufferScore} / 20 分</strong></div>
+        <div><span>安全垫管理</span><strong>${breakdown.bufferManagementScore} / 15 分</strong></div>
+        <div><span>现金储备为正</span><strong>${breakdown.savingsScore} / 15 分</strong></div>
+        <div><span>基础分</span><strong>${breakdown.baseScore} 分</strong></div>
+        <div class="is-cost"><span>生活体验</span><strong>${wellbeingPenalty ? `-${wellbeingPenalty}` : "0"} 分</strong></div>
+      </div>
+      <div class="score-buffer-note">
+        <strong>安全垫 ${formatBuffer(breakdown.initialBuffer)} → ${formatBuffer(breakdown.finalBuffer)} 个月</strong>
+        <span>最终安全垫每1个月得4分，最高20分。管理分以开局保持不变的10分为基准，每提高1个月约加2.5分，每下降1个月约减2.5分。</span>
       </div>
       <p>生活体验扣分来自明确压缩休息、持续降低生活安排或承担高强度工作的选择，单局最多扣 20 分。它不代表消费越多越好。</p>
       ${wellbeingRows ? `<div class="score-life-list">${wellbeingRows}</div>` : `<p class="score-empty">本局没有记录明显影响生活体验的选择。</p>`}
@@ -1427,6 +1497,13 @@ function resultProtectionHtml(result) {
 function getDcaResult() {
   const plan = getDcaPlan();
   if (!plan) return null;
+  const endingMonth = Math.max(Number(plan.startMonth) || 1, getCompletedMonths());
+  const priceHistory = window.CashGameCore.getInvestmentPriceSeries(plan.priceHistory, {
+    startMonth: plan.startMonth,
+    endMonth: endingMonth,
+    endingNav: plan.nav,
+  });
+  const actions = window.CashGameCore.summarizeInvestmentActions(plan.actionHistory);
   const invested = plan.totalInvested || 0;
   const holdingPrincipal = getDcaHoldingPrincipal(plan);
   const returnRate = getDcaCurrentReturnRate(plan);
@@ -1452,6 +1529,9 @@ function getDcaResult() {
       unrealizedProfit: 0,
       returnAmount: 0,
       returnRate: 0,
+      nav: Number(plan.nav) || 3,
+      priceHistory,
+      actions,
       summary: "定投计划已经开启，暂时还没有形成阶段结果。",
     };
   }
@@ -1475,15 +1555,19 @@ function getDcaResult() {
     unrealizedProfit,
     returnAmount: totalValue - invested,
     returnRate: totalReturnRate,
+    nav: Number(plan.nav) || 3,
+    priceHistory,
+    actions,
     summary: summaryParts.join("，") + "。",
   };
 }
 
 function resultDcaHtml(result) {
   const metrics = getDcaResultMetrics(result);
+  const actionPreview = getInvestmentActionPreview(result.actions);
   return `
     <div class="result-special-card dca-result-card">
-      <span>定投阶段结论</span>
+      <span>投资阶段结论</span>
       <strong>${escapeHtml(result.label)}</strong>
       <div class="dca-result-metrics">
         ${metrics
@@ -1497,13 +1581,166 @@ function resultDcaHtml(result) {
           )
           .join("")}
       </div>
+      ${investmentNavCurveHtml(result)}
+      ${
+        actionPreview.length
+          ? `
+            <div class="investment-action-section">
+              <div class="investment-action-head">
+                <strong>投资操作</strong>
+                ${
+                  result.actions.length > actionPreview.length
+                    ? `<button type="button" data-action="investment-history">查看全部 ${result.actions.length} 条</button>`
+                    : `<span>${result.actions.length} 条记录</span>`
+                }
+              </div>
+              <div class="investment-action-list">
+                ${actionPreview.map(investmentActionRowHtml).join("")}
+              </div>
+            </div>
+          `
+          : ""
+      }
       <p>累计投入 ${formatMoney(result.invested)}。${escapeHtml(result.summary)}</p>
     </div>
   `;
 }
 
+function investmentNavCurveHtml(result) {
+  const history = Array.isArray(result.priceHistory) ? result.priceHistory : [];
+  if (!history.length) return "";
+  const points = getInvestmentCurvePoints(history);
+  const path = getSmoothCurvePath(points);
+  const areaPath = `${path} L ${points[points.length - 1].x} 102 L ${points[0].x} 102 Z`;
+  const lowest = history.reduce((current, item) => (item.nav < current.nav ? item : current), history[0]);
+  const highest = history.reduce((current, item) => (item.nav > current.nav ? item : current), history[0]);
+  const entry = history[0];
+  const ending = history[history.length - 1];
+
+  return `
+    <div class="investment-curve">
+      <div class="investment-curve-head">
+        <strong>基金净值轨迹</strong>
+        <span>第 ${entry.month}–${ending.month} 个月</span>
+      </div>
+      <svg viewBox="0 0 300 112" role="img" aria-label="宽基指数基金净值轨迹">
+        <path class="investment-curve-grid" d="M 24 28 H 276 M 24 58 H 276 M 24 88 H 276" />
+        <path class="investment-curve-area" d="${areaPath}" />
+        <path class="investment-curve-line" d="${path}" />
+        ${points
+          .map(
+            (point, index) => `
+              <circle class="investment-curve-point ${index === points.length - 1 ? "is-current" : ""}" cx="${point.x}" cy="${point.y}" r="${index === points.length - 1 ? 5 : 3.5}" />
+            `,
+          )
+          .join("")}
+      </svg>
+      <div class="investment-curve-labels">
+        <div><span>入场</span><strong>${entry.nav.toFixed(2)}</strong><small>第 ${entry.month} 月</small></div>
+        <div><span>区间低点</span><strong>${lowest.nav.toFixed(2)}</strong><small>第 ${lowest.month} 月</small></div>
+        <div><span>区间高点</span><strong>${highest.nav.toFixed(2)}</strong><small>第 ${highest.month} 月</small></div>
+        <div><span>结算</span><strong>${ending.nav.toFixed(2)}</strong><small>第 ${ending.month} 月</small></div>
+      </div>
+    </div>
+  `;
+}
+
+function getInvestmentCurvePoints(history) {
+  const months = history.map((item) => item.month);
+  const navs = history.map((item) => item.nav);
+  const minMonth = Math.min(...months);
+  const maxMonth = Math.max(...months);
+  const minNav = Math.min(...navs);
+  const maxNav = Math.max(...navs);
+  const monthRange = Math.max(1, maxMonth - minMonth);
+  const navRange = Math.max(0.35, maxNav - minNav);
+  return history.map((item, index) => ({
+    x: history.length === 1 ? 150 : 28 + ((item.month - minMonth) / monthRange) * 244,
+    y: history.length === 1 ? 60 : Math.round(90 - ((item.nav - minNav) / navRange) * 62),
+    index,
+  }));
+}
+
+function getInvestmentActionPreview(actions) {
+  if (!Array.isArray(actions) || actions.length <= 4) return Array.isArray(actions) ? actions : [];
+  return [actions[0], ...actions.slice(-3)];
+}
+
+function investmentActionRowHtml(item) {
+  const copy = getInvestmentActionCopy(item);
+  const monthLabel = item.endMonth && item.endMonth !== item.month
+    ? `第 ${item.month}–${item.endMonth} 月`
+    : `第 ${item.month} 月`;
+  return `
+    <div class="investment-action-row">
+      <span>${monthLabel}</span>
+      <div>
+        <strong>${escapeHtml(copy.label)}</strong>
+        <small>${escapeHtml(copy.detail)}</small>
+      </div>
+    </div>
+  `;
+}
+
+function getInvestmentActionCopy(item) {
+  const navText = Number.isFinite(item.nav) ? ` · 净值 ${item.nav.toFixed(2)}` : "";
+  if (item.action === "initial_buy") return { label: "一次性买入", detail: `投入 ${formatMoney(item.amount)}${navText}` };
+  if (item.action === "start_dca") return { label: "开始定投", detail: `每月 ${formatMoney(item.amount)}` };
+  if (item.action === "monthly_dca_summary") {
+    return { label: "定投执行", detail: `共 ${item.count} 次 · 累计投入 ${formatMoney(item.amount)}` };
+  }
+  if (item.action === "add_once") return { label: "追加买入", detail: `投入 ${formatMoney(item.amount)}${navText}` };
+  if (item.action === "pause_dca") return { label: "暂停定投", detail: `保留当前持仓${navText}` };
+  if (item.action === "dca_skipped_cash") return { label: "定投自动暂停", detail: `本月未投入 ${formatMoney(item.amount)}${navText}` };
+  if (item.action === "resume_dca") return { label: "恢复定投", detail: `恢复每月投入${navText}` };
+  if (item.action === "hold_summary") return { label: "继续持有", detail: `共选择 ${item.count} 次` };
+  if (["sell_half", "sell_all"].includes(item.action)) {
+    const profit = (item.amount || 0) - (item.principal || 0);
+    const profitText = profit >= 0 ? `盈利 ${formatMoney(profit)}` : `亏损 ${formatMoney(Math.abs(profit))}`;
+    return {
+      label: item.action === "sell_all" ? "全部卖出" : "卖出一半",
+      detail: `回款 ${formatMoney(item.amount)} · ${profitText}${navText}`,
+    };
+  }
+  if (["emergency_sell_partial", "emergency_sell_all"].includes(item.action)) {
+    const profit = (item.amount || 0) - (item.principal || 0);
+    const profitText = profit >= 0 ? `盈利 ${formatMoney(profit)}` : `亏损 ${formatMoney(Math.abs(profit))}`;
+    return {
+      label: item.action === "emergency_sell_all" ? "应急全部卖出" : "应急卖出部分",
+      detail: `回款 ${formatMoney(item.amount)} · ${profitText}${navText}`,
+    };
+  }
+  return { label: "投资操作", detail: navText ? navText.slice(3) : "本次操作已记录" };
+}
+
+function renderInvestmentHistory() {
+  const result = getDcaResult();
+  if (!result?.actions?.length) return;
+  openModal(`
+    <div class="history-modal investment-history-modal">
+      <div class="history-modal-head">
+        <div>
+          <span>本局投资</span>
+          <h2>投资操作记录</h2>
+        </div>
+        <strong>${result.actions.length} 条记录</strong>
+      </div>
+      <div class="investment-history-list">
+        ${result.actions.map(investmentActionRowHtml).join("")}
+      </div>
+      <div class="modal-actions history-modal-actions">
+        <button class="button secondary" data-action="close-modal">关闭</button>
+      </div>
+    </div>
+  `, "history-backdrop");
+}
+
 function getDcaResultMetrics(result) {
   const metrics = [
+    {
+      label: "期末净值",
+      value: `${Number(result.nav || 3).toFixed(2)} 元`,
+    },
     {
       label: "阶段收益率",
       value: result.invested > 0 ? formatPercent(result.returnRate) : "暂无",
@@ -1580,78 +1817,194 @@ function resultCareerCourseHtml(result) {
   `;
 }
 
-function renderDcaMarketCard(plan, stage) {
-  const state = getDcaMarketState(stage, plan);
-  const holdingValue = getDcaHoldingValue(plan, state.returnRate);
+function renderMarketQuote() {
+  const market = ensureMarketState();
+  syncInvestmentWithMarket();
+  const plan = getDcaPlan();
+  const hasHolding = plan && getInvestmentHoldingStatus(plan) !== "sold_all" && getDcaHoldingPrincipal(plan) > 0;
+  const stage = marketTrendStage(market.trend);
+  const state = getDcaMarketState(stage, hasHolding ? plan : null);
+  const alreadyTraded = market.tradedMonth === player.currentMonth;
+  const dcaStatus = hasHolding ? getInvestmentDcaStatus(plan) : "never_started";
+  const accountMetrics = hasHolding
+    ? [
+        { label: "持仓市值", value: formatMoney(getDcaHoldingValue(plan)) },
+        { label: "阶段收益率", value: formatPercent(getDcaCurrentReturnRate(plan)) },
+        { label: "累计投入", value: formatMoney(plan.totalInvested || 0) },
+        dcaStatus === "active"
+          ? { label: "每月定投", value: formatMoney(plan.monthlyDcaAmount || plan.monthlyAmount || 0) }
+          : { label: "定投状态", value: dcaStatus === "paused" ? "已暂停" : "未开启" },
+      ]
+    : [];
+  const choices = hasHolding
+    ? state.choices
+    : [
+        { id: "buy_once", label: "一次性买入", text: `从现金储备取出 ${formatMoney(6000)} 买入。` },
+        { id: "begin_dca", label: "每月定投", text: `从本月起每月投入 ${formatMoney(2000)}。` },
+        { id: "skip", label: "暂不参与", text: "这次不买入。" },
+      ];
 
-  openModal(`
-    <h2>${escapeHtml(state.title)}</h2>
-    <p>${escapeHtml(state.description)}</p>
-    <div class="investment-snapshot">
-      <div>
-        <span>累计投入</span>
-        <strong>${formatMoney(plan.totalInvested || 0)}</strong>
-      </div>
-      <div>
-        <span>当前估算市值</span>
-        <strong>${formatMoney(holdingValue)}</strong>
-      </div>
-      <div>
-        <span>阶段收益率</span>
-        <strong>${formatPercent(state.returnRate)}</strong>
-      </div>
-    </div>
-    <div class="choice-list">
-      ${state.choices
-        .map(
-          (choice) => `
-            <button class="choice-button" data-action="dca-market-choice" data-stage="${stage}" data-choice="${choice.id}">
-              <strong>${escapeHtml(choice.label)}</strong>
-              <span>${escapeHtml(choice.text)}</span>
-            </button>
-          `,
-        )
-        .join("")}
-    </div>
-  `);
+  market.lastViewedMonth = player.currentMonth;
+  openModal(
+    marketQuoteHtml({
+      subtitle: market.fundName,
+      currentNav: `${market.nav.toFixed(2)} 元`,
+      trendLabel: marketTrendLabel(market.trend),
+      accountStatus: hasHolding ? investmentPlanStatusText(plan) : "当前未持有这只基金",
+      accountMetrics,
+      notice: alreadyTraded ? "本月已经完成一次投资操作，下个月可以再次交易。" : "",
+      choicesHtml: alreadyTraded
+        ? ""
+        : choices
+            .map(
+              (choice) => `
+                <button class="choice-button" data-action="market-quote-choice" data-choice="${choice.id}">
+                  <strong>${escapeHtml(choice.label)}</strong>
+                  <span>${escapeHtml(choice.text)}</span>
+                </button>
+              `,
+            )
+            .join(""),
+    }),
+    "investment-quote-backdrop",
+  );
 }
 
-function handleDcaMarketChoice(choice, stage) {
-  const plan = getDcaPlan();
-  if (!plan) return;
+function marketQuoteHtml({ subtitle, currentNav, trendLabel, accountStatus, accountMetrics, choicesHtml, notice = "" }) {
+  return `
+    <div class="market-quote-card">
+      <div class="market-quote-head">
+        <div class="market-quote-title-row">
+          <h2>市场先生报价</h2>
+          <span>第 ${player.currentMonth} 个月</span>
+        </div>
+        <p>${escapeHtml(subtitle)}</p>
+      </div>
+      <div class="market-quote-market">
+        <span>当前净值</span>
+        <strong>${escapeHtml(currentNav)}</strong>
+        <small>最近走势 <b>${escapeHtml(trendLabel)}</b></small>
+      </div>
+      <div class="market-quote-scroll">
+        <section class="market-account ${accountMetrics.length ? "has-holding" : "is-empty"}">
+          <div class="market-account-head">
+            <strong>我的持仓</strong>
+            <span>${escapeHtml(accountStatus)}</span>
+          </div>
+          ${accountMetrics.length
+            ? `
+              <div class="market-account-grid">
+                ${accountMetrics
+                  .map(
+                    (metric) => `
+                      <div>
+                        <span>${escapeHtml(metric.label)}</span>
+                        <strong>${escapeHtml(metric.value)}</strong>
+                      </div>
+                    `,
+                  )
+                  .join("")}
+              </div>
+            `
+            : `<p>还没有买入记录，本次报价可用于决定是否开始。</p>`}
+        </section>
+        ${notice ? `<div class="market-quote-notice">${escapeHtml(notice)}</div>` : ""}
+        ${choicesHtml
+          ? `
+            <section class="market-quote-actions">
+              <h3>本月操作</h3>
+              <div class="choice-list market-quote-choices">${choicesHtml}</div>
+            </section>
+          `
+          : ""}
+      </div>
+      <div class="market-quote-footer"><button class="button secondary" data-action="close-market-quote">关闭报价</button></div>
+    </div>
+  `;
+}
 
-  const state = getDcaMarketState(stage || plan.pendingMarketStage, plan);
+function handleMarketQuoteChoice(choice) {
+  const market = ensureMarketState();
+  if (market.tradedMonth === player.currentMonth) return;
+  let plan = getDcaPlan();
+  const stage = marketTrendStage(market.trend);
   const holdingBefore = getDcaHoldingPrincipal(plan);
 
+  if (choice === "buy_once") startInvestmentPlan({ initialAmount: 6000 });
+  if (choice === "begin_dca") startInvestmentPlan({ monthlyAmount: 2000, initialAmount: 2000 });
+  plan = getDcaPlan();
+
+  if (!plan && choice !== "skip") return;
+  const state = getDcaMarketState(stage, plan);
+
   if (choice === "sell_half") {
-    sellDcaHolding(plan, 0.5, state.returnRate);
+    sellDcaHolding(plan, 0.5, stage);
     plan.lastAction = `${state.stage}_sell_half`;
   }
 
   if (choice === "sell_all") {
-    sellDcaHolding(plan, 1, state.returnRate);
+    sellDcaHolding(plan, 1, state.stage);
     plan.lastAction = `${state.stage}_sell_all`;
   }
 
-  if (choice === "hold") {
-    plan.lastAction = `${state.stage}_hold`;
+  if (choice === "add_once") {
+    const amount = 4000;
+    player.savings -= amount;
+    recordInvestmentPurchase(plan, amount, "add_once", { stage: state.stage });
+    plan.lastAction = `${state.stage}_add_once`;
+    updateLowestSavingsAndBuffer();
   }
 
-  if (choice === "stop_dca") {
-    plan.status = "paused";
-    plan.pauseCount += 1;
-    plan.lastAction = `${state.stage}_stop_dca`;
+  if (choice === "hold" && plan) {
+    plan.lastAction = `${state.stage}_hold`;
+    plan.actionHistory = Array.isArray(plan.actionHistory) ? plan.actionHistory : [];
+    plan.actionHistory.push({ month: player.currentMonth, action: "hold", nav: plan.nav, stage: state.stage });
+  }
+
+  if (choice === "pause_dca" && plan) {
+    plan.dcaStatus = "paused";
+    plan.pauseCount = (plan.pauseCount || 0) + 1;
+    plan.lastAction = `${state.stage}_pause_dca`;
+    plan.actionHistory = Array.isArray(plan.actionHistory) ? plan.actionHistory : [];
+    plan.actionHistory.push({ month: player.currentMonth, action: "pause_dca", nav: plan.nav, stage: state.stage });
     removeDcaMonthlyEffect();
   }
 
-  plan.pendingMarketStage = null;
+  if (choice === "resume_dca" && plan) {
+    plan.dcaStatus = "active";
+    plan.monthlyDcaAmount = Math.max(1, Number(plan.monthlyDcaAmount || plan.monthlyAmount) || 2000);
+    plan.monthlyAmount = plan.monthlyDcaAmount;
+    plan.lastAction = `${state.stage}_resume_dca`;
+    plan.actionHistory = Array.isArray(plan.actionHistory) ? plan.actionHistory : [];
+    plan.actionHistory.push({ month: player.currentMonth, action: "resume_dca", nav: plan.nav, stage: state.stage });
+  }
+
+  if (choice === "start_dca" && plan) {
+    plan.dcaStatus = "active";
+    plan.monthlyDcaAmount = Math.max(1, Number(plan.monthlyDcaAmount || plan.monthlyAmount) || 2000);
+    plan.monthlyAmount = plan.monthlyDcaAmount;
+    plan.lastAction = `${state.stage}_start_dca`;
+    plan.actionHistory = Array.isArray(plan.actionHistory) ? plan.actionHistory : [];
+    plan.actionHistory.push({
+      month: player.currentMonth,
+      action: "start_dca",
+      amount: plan.monthlyDcaAmount,
+      nav: plan.nav,
+      stage: state.stage,
+    });
+  }
+
+  if (plan) syncInvestmentLegacyStatus(plan);
+  market.tradedMonth = player.currentMonth;
+  market.lastQuoteMonth = player.currentMonth;
+  market.previousQuoteNav = market.nav;
   trackEvent("cash_game_investment_choice_made", {
-    // 记录：玩家在估值修复或阶段高估时做出的投资选择。
+    // 记录：玩家在市场先生报价中的投资选择。
     market_stage: state.stage,
     choice_type: choice,
     month: player.currentMonth,
   });
-  if (choice === "sell_half" || choice === "sell_all") {
+  if ((choice === "sell_half" || choice === "sell_all") && plan) {
     trackEvent("cash_game_investment_sold", {
       // 记录：玩家发生卖出行为，只记录卖出类型，不上传卖出金额。
       market_stage: state.stage,
@@ -1660,9 +2013,29 @@ function handleDcaMarketChoice(choice, stage) {
       holding_before_band: holdingBefore > 0 ? "has_holding" : "no_holding",
     });
   }
+  syncLatestSnapshotAfterMarketAction();
   saveGame();
   closeModal();
-  renderGamePage("投资状态已更新。");
+  continueAfterMarketQuote("投资状态已更新。");
+}
+
+function closeMarketQuote() {
+  const market = ensureMarketState();
+  market.lastQuoteMonth = player.currentMonth;
+  market.previousQuoteNav = market.nav;
+  saveGame();
+  closeModal();
+  continueAfterMarketQuote();
+}
+
+function continueAfterMarketQuote(message = "") {
+  if (player.pendingTransition?.marketQuoteDue && !player.pendingTransition.marketQuoteHandled) {
+    player.pendingTransition.marketQuoteHandled = true;
+    saveGame();
+    finishMonthTransition();
+    return;
+  }
+  renderGamePage(message || "市场报价保持不变。", { skipEcho: true });
 }
 
 function startGame(identity, maxMonth = selectedMaxMonth) {
@@ -1694,6 +2067,8 @@ function startGame(identity, maxMonth = selectedMaxMonth) {
     tempExpensePercent: 0,
     activeEffects: [],
     longTermPlans: [],
+    investment: null,
+    market: null,
     scheduledCards: [],
     pendingEchoes: [],
     pendingTransition: null,
@@ -1707,11 +2082,18 @@ function startGame(identity, maxMonth = selectedMaxMonth) {
     endReason: null,
     endedMonth: null,
     history: [],
+    cashRescueHistory: [],
     gameEnded: false,
     randomState: debugMode ? debugRandomState : null,
     debugSeed: debugMode ? debugSeedText : null,
     startedAt: Date.now(),
   };
+  player.market = window.CashGameCore.createInitialMarketState(
+    randomFloat(),
+    randomFloat(),
+    randomFloat(),
+    debugStartMonth,
+  );
   player.careerEventMonth = randomInt(2, Math.max(2, Math.min(5, normalizedMaxMonth - 2)));
   lastDice = null;
   pendingMonthlySummary = null;
@@ -1731,6 +2113,72 @@ function startGame(identity, maxMonth = selectedMaxMonth) {
 function getScheduledTriggerMonth(delay, preserveDelay = false) {
   const triggerMonth = player.currentMonth + (delay || 1);
   return preserveDelay ? triggerMonth : Math.min(player.maxMonth, triggerMonth);
+}
+
+function startInvestmentPlan({ monthlyAmount = 0, initialAmount = 0 } = {}) {
+  const existing = getDcaPlan();
+  if (existing && getInvestmentHoldingStatus(existing) !== "sold_all") {
+    showToast("你已经持有这只基金，不能重复开启。");
+    return false;
+  }
+
+  const normalizedMonthlyAmount = Math.max(0, Math.round(Number(monthlyAmount) || 0));
+  const normalizedInitialAmount = Math.max(0, Math.round(Number(initialAmount) || 0));
+  const market = ensureMarketState();
+  const previousActions = Array.isArray(existing?.actionHistory) ? existing.actionHistory : [];
+  const previousPriceHistory = Array.isArray(existing?.priceHistory) ? existing.priceHistory : [];
+  player.investment = window.CashGameCore.normalizeInvestmentState({
+    ...(existing || {}),
+    id: "index_fund_001",
+    fundName: "宽基指数基金",
+    name: "宽基指数基金",
+    status: normalizedMonthlyAmount > 0 ? "active" : "paused",
+    holdingStatus: "holding",
+    dcaStatus: normalizedMonthlyAmount > 0 ? "active" : "never_started",
+    entryMode: normalizedMonthlyAmount > 0 ? "dca" : "one_time",
+    entryNav: market.nav,
+    nav: market.nav,
+    valuation: market.valuation,
+    shares: 0,
+    monthlyDcaAmount: normalizedMonthlyAmount,
+    monthlyAmount: normalizedMonthlyAmount,
+    totalInvested: existing?.totalInvested || 0,
+    holdingPrincipal: 0,
+    soldPrincipal: existing?.soldPrincipal || 0,
+    realizedAmount: existing?.realizedAmount || 0,
+    realizedProfit: existing?.realizedProfit || 0,
+    currentReturnRate: 0,
+    marketStage: marketTrendStage(market.trend),
+    startMonth: player.currentMonth,
+    pauseCount: 0,
+    lastAction: normalizedMonthlyAmount > 0 ? "start_dca" : "initial_buy",
+    priceHistory: [
+      ...previousPriceHistory.filter((item) => Number(item.month) !== Number(player.currentMonth)),
+      { month: player.currentMonth, nav: market.nav, stage: marketTrendStage(market.trend) },
+    ],
+    actionHistory: previousActions,
+  });
+
+  if (normalizedInitialAmount > 0) {
+    player.savings -= normalizedInitialAmount;
+    recordInvestmentPurchase(player.investment, normalizedInitialAmount, "initial_buy");
+    updateLowestSavingsAndBuffer();
+  }
+  if (normalizedMonthlyAmount > 0) {
+    player.investment.actionHistory.push({
+      month: player.currentMonth,
+      action: "start_dca",
+      amount: normalizedMonthlyAmount,
+      nav: player.investment.nav,
+    });
+  }
+
+  trackEvent("cash_game_dca_started", {
+    month: player.currentMonth,
+    challenge_length: player.maxMonth,
+    investment_mode: normalizedMonthlyAmount > 0 ? "monthly" : "one_time",
+  });
+  return true;
 }
 
 function applyEffect(effect, event = null) {
@@ -1865,44 +2313,13 @@ function applyEffect(effect, event = null) {
     return;
   }
 
+  if (effect.type === "start_fund_investment") {
+    startInvestmentPlan({ initialAmount: effect.initialAmount });
+    return;
+  }
+
   if (effect.type === "start_dca_plan") {
-    if (getDcaPlan()) {
-      showToast("你已经有一个定投计划，不能重复开启。");
-      return;
-    }
-
-    player.longTermPlans.push({
-      id: "index_dca_001",
-      name: "低估指数定投计划",
-      status: "active",
-      monthlyAmount: effect.monthlyAmount,
-      totalInvested: 0,
-      holdingPrincipal: 0,
-      realizedAmount: 0,
-      realizedProfit: 0,
-      currentReturnRate: 0,
-      marketStage: "low",
-      startMonth: player.currentMonth,
-      recoveryMonth: getDcaRecoveryMonth(),
-      overvaluedMonth: null,
-      pauseCount: 0,
-      recoveryTriggered: false,
-      overvaluedTriggered: false,
-      lastAction: null,
-    });
-
-    player.activeEffects.push({
-      id: "dca_monthly",
-      target: "expense",
-      amount: effect.monthlyAmount,
-      remainingMonths: 999,
-      sourcePlanId: "index_dca_001",
-    });
-    trackEvent("cash_game_dca_started", {
-      // 记录：玩家开启定投计划，用于观察投资相关玩法是否被使用。
-      month: player.currentMonth,
-      challenge_length: player.maxMonth,
-    });
+    startInvestmentPlan({ monthlyAmount: effect.monthlyAmount });
     return;
   }
 
@@ -1987,12 +2404,20 @@ function buildMonthlySummary(event, choice, before, afterEffect) {
     tempExpenseDelta,
   });
   const monthlyNetCashflow = settlement.monthlyNetCashflow;
-  const savingsAfterMonth = settlement.savingsAfterMonth;
+  const requestedInvestmentContribution = getMonthlyInvestmentContribution();
+  const investmentExecution = window.CashGameCore.calculateAffordableInvestmentContribution({
+    savingsBeforeContribution: settlement.savingsAfterMonth,
+    requestedAmount: requestedInvestmentContribution,
+  });
+  const investmentContribution = investmentExecution.contributionAmount;
+  const investmentContributionSkipped = investmentExecution.skippedAmount;
+  if (investmentExecution.shouldPause) pauseDcaForCashShortfall(getDcaPlan(), investmentContributionSkipped);
+  const savingsAfterMonth = settlement.savingsAfterMonth - investmentContribution;
   const savingsDelta = savingsAfterMonth - before.savings;
   const bufferAfterMonth = getBuffer(savingsAfterMonth, recurringExpense);
   const beforeBuffer = before.buffer;
   const afterBuffer = bufferAfterMonth;
-  const direction = monthlyNetCashflow >= 0 ? "仍然保持正现金流" : "出现了负现金流";
+  const direction = savingsDelta >= 0 ? "结算后现金储备增加" : "结算后现金储备减少";
   const bufferDelta = afterBuffer - beforeBuffer;
 
   return {
@@ -2015,13 +2440,15 @@ function buildMonthlySummary(event, choice, before, afterEffect) {
     reserveDelta,
     protectionReduction,
     monthlyNetCashflow,
+    investmentContribution,
+    investmentContributionSkipped,
     savingsAfterMonth,
     savingsAfterSettlement: savingsAfterMonth,
     savingsDelta,
     bufferAfterMonth,
     bufferAfterSettlement: bufferAfterMonth,
     bufferDelta,
-    roundLabel: getRoundLabel(monthlyNetCashflow, beforeBuffer, afterBuffer),
+    roundLabel: getRoundLabel(savingsDelta, beforeBuffer, afterBuffer),
     narrative: `这个月你${direction}，安全垫从 ${formatBuffer(beforeBuffer)} 个月变成了 ${formatBuffer(afterBuffer)} 个月。`,
     analysis: event.insight,
     recoveryPreview: getUncertainEffectHint(),
@@ -2085,13 +2512,29 @@ function calculateBuffer() {
   return getBuffer(player.savings, calculateRecurringExpense());
 }
 
-function processLongTermPlans() {
-  player.longTermPlans.forEach((plan) => {
-    if (plan.id === "index_dca_001" && plan.status === "active") {
-      plan.totalInvested += plan.monthlyAmount;
-      plan.holdingPrincipal = getDcaHoldingPrincipal(plan) + plan.monthlyAmount;
-    }
+function pauseDcaForCashShortfall(plan, skippedAmount) {
+  if (!plan || getInvestmentDcaStatus(plan) !== "active") return;
+  plan.dcaStatus = "paused";
+  plan.pauseCount = (plan.pauseCount || 0) + 1;
+  plan.lastAction = "dca_skipped_cash";
+  plan.actionHistory = Array.isArray(plan.actionHistory) ? plan.actionHistory : [];
+  plan.actionHistory.push({
+    month: player.currentMonth,
+    action: "dca_skipped_cash",
+    amount: Math.max(0, Math.round(Number(skippedAmount) || 0)),
+    nav: plan.nav,
+  });
+  syncInvestmentLegacyStatus(plan);
+}
 
+function processLongTermPlans() {
+  const investment = getDcaPlan();
+  const investmentContribution = getMonthlyInvestmentContribution();
+  if (investment && investmentContribution > 0) {
+    recordInvestmentPurchase(investment, investmentContribution, "monthly_dca");
+  }
+
+  player.longTermPlans.forEach((plan) => {
     if (plan.id === "basic_protection_001" && plan.status === "active") {
       plan.remainingMonths -= 1;
       if (plan.remainingMonths <= 0) {
@@ -2159,7 +2602,7 @@ function resolveScheduledCard(card) {
       id: card.id,
       title: card.title,
       message: card.message,
-      effectLine: `${card.activeEffect.target === "expense" ? "常规月支出" : "常规月收入"} ${formatSignedMoney(card.activeEffect.amount)}${durationSuffix(card.activeEffect.duration)}。`,
+      effectLine: `${formatActiveEffectLine(card.activeEffect, "常规月")}。`,
       savingsDelta: 0,
       savingsAfter: player.savings,
       bufferAfter: calculateBuffer(),
@@ -2187,13 +2630,31 @@ function resolveScheduledCard(card) {
     card.outcomeId = outcome.id || null;
     card.amount = window.CashGameCore.calculateSavingsOutcomeAmount(outcome, player.baseIncome);
     player.savings += card.amount;
-    recordStress(outcome.title || card.title || "后续事件", Math.max(0, -card.amount), "次");
 
     const incomeLoss = Math.round(player.baseIncome * (Number(outcome.incomeLossPercent) || 0));
     const savingsCost = Math.round(Number(outcome.savingsCost) || 0);
+    const activeEffect = outcome.activeEffect;
+    const hasActiveEffect =
+      activeEffect &&
+      ["income", "income_percent", "expense", "expense_percent"].includes(activeEffect.target) &&
+      Number.isFinite(Number(activeEffect.amount)) &&
+      Number(activeEffect.duration) > 0;
+    if (hasActiveEffect) {
+      player.activeEffects.push({
+        id: generateId("scheduled_random_effect"),
+        name: activeEffect.name || outcome.title || card.title || "后续影响",
+        target: activeEffect.target,
+        amount: Number(activeEffect.amount),
+        remainingMonths: Number(activeEffect.duration),
+        sourceEventId: card.id,
+      });
+    }
+    if (outcome.silent && !card.amount && !incomeLoss && !savingsCost && !hasActiveEffect) return null;
+    recordStress(outcome.title || card.title || "后续事件", Math.max(0, -card.amount), "次");
     const riskImpactLines = [];
     if (incomeLoss) riskImpactLines.push(`本月收入 -${formatMoney(incomeLoss)}`);
     if (savingsCost) riskImpactLines.push(`现金储备 -${formatMoney(savingsCost)}`);
+    if (hasActiveEffect) riskImpactLines.push(formatActiveEffectLine(activeEffect, "常规月"));
     const effectLine = riskImpactLines.length
       ? `${riskImpactLines.join(" · ")}。`
       : `现金储备 ${formatSignedMoney(card.amount)}。`;
@@ -2250,7 +2711,7 @@ function resolveScheduledCard(card) {
 function showNextScheduledEcho() {
   const echo = player?.pendingEchoes?.[0];
   if (!echo) {
-    finishMonthTransition();
+    showPendingMarketQuoteOrFinish();
     return;
   }
   renderScheduledEchoCard(echo);
@@ -2273,7 +2734,7 @@ function renderScheduledEchoCard(echo) {
 function continueScheduledEcho() {
   if (!player?.pendingEchoes?.length) {
     closeModal();
-    finishMonthTransition();
+    showPendingMarketQuoteOrFinish();
     return;
   }
   player.pendingEchoes.shift();
@@ -2283,7 +2744,7 @@ function continueScheduledEcho() {
     window.setTimeout(showNextScheduledEcho, 120);
     return;
   }
-  finishMonthTransition();
+  showPendingMarketQuoteOrFinish();
 }
 
 function continueAfterTurnFeedback() {
@@ -2294,12 +2755,281 @@ function continueAfterTurnFeedback() {
     window.setTimeout(showNextScheduledEcho, 120);
     return;
   }
+  showPendingMarketQuoteOrFinish();
+}
+
+function getCashRescueOptions(savings = player?.savings) {
+  const plan = getDcaPlan();
+  const hasHolding = plan && getInvestmentHoldingStatus(plan) !== "sold_all" && getDcaHoldingPrincipal(plan) > 0;
+  return window.CashGameCore.calculateCashRescueOptions({
+    savings,
+    shares: hasHolding ? plan.shares : 0,
+    holdingPrincipal: hasHolding ? getDcaHoldingPrincipal(plan) : 0,
+    nav: hasHolding ? plan.nav : ensureMarketState()?.nav,
+  });
+}
+
+function createPendingCashRescue() {
+  const options = getCashRescueOptions();
+  return {
+    month: player.currentMonth,
+    handled: false,
+    eligible: options.eligible,
+    hasHolding: options.hasHolding,
+    savingsBeforeRescue: player.savings,
+    deficit: options.deficit,
+    holdingValue: options.holdingValue,
+    nav: Number(getDcaPlan()?.nav) || Number(ensureMarketState()?.nav) || 0,
+  };
+}
+
+function recordUnavailableCashRescue(rescue) {
+  player.cashRescueHistory = Array.isArray(player.cashRescueHistory) ? player.cashRescueHistory : [];
+  if (player.cashRescueHistory.some((item) => item.month === player.currentMonth && item.outcome === "insufficient")) return;
+  const entry = {
+    month: player.currentMonth,
+    outcome: "insufficient",
+    deficit: rescue.deficit,
+    holdingValue: rescue.holdingValue,
+    savingsAfter: player.savings,
+  };
+  player.cashRescueHistory.push(entry);
+  player.history.push({
+    month: player.currentMonth,
+    entryType: "cash_rescue_unavailable",
+    eventTitle: "基金持仓不足以填补缺口",
+    category: "investment",
+    choice: null,
+    effectLine: `现金缺口 ${formatMoney(rescue.deficit)}，基金持仓估值 ${formatMoney(rescue.holdingValue)}。`,
+    savingsAfter: player.savings,
+    bufferAfter: calculateBuffer(),
+  });
+}
+
+function renderCashRescue() {
+  const transition = player?.pendingTransition;
+  if (!transition?.cashRescue || transition.cashRescue.handled) return;
+  const options = getCashRescueOptions();
+  const plan = getDcaPlan();
+  if (!options.eligible || !plan) {
+    transition.cashRescue.handled = true;
+    saveGame();
+    finishMonthTransition();
+    return;
+  }
+
+  const partialIsFull = options.partialRatio >= 0.999999 || options.partialSale.status === "sold_all";
+  const partialChoice = partialIsFull
+    ? ""
+    : `
+      <button class="choice-button rescue-choice" data-action="cash-rescue-choice" data-choice="partial">
+        <strong>卖出足够份额</strong>
+        <span>预计回款 ${formatMoney(options.partialSale.soldAmount)}，卖出后现金储备 ${formatMoney(options.savingsAfterPartial)}。</span>
+      </button>
+    `;
+
+  openModal(
+    `
+      <div class="cash-rescue-card">
+        <div class="cash-rescue-head">
+          <span>第 ${player.currentMonth} 个月</span>
+          <h2>现金储备告急</h2>
+          <p>本月结算后现金储备出现缺口。</p>
+        </div>
+        <div class="cash-rescue-metrics">
+          <div class="is-danger"><span>现金缺口</span><strong>-${formatMoney(options.deficit)}</strong></div>
+          <div><span>基金净值</span><strong>${Number(plan.nav).toFixed(2)} 元</strong></div>
+          <div><span>持仓市值</span><strong>${formatMoney(options.holdingValue)}</strong></div>
+          <div><span>阶段收益率</span><strong>${formatPercent(getDcaCurrentReturnRate(plan))}</strong></div>
+        </div>
+        <div class="choice-list cash-rescue-choices">
+          ${partialChoice}
+          <button class="choice-button rescue-choice" data-action="cash-rescue-choice" data-choice="all">
+            <strong>全部卖出</strong>
+            <span>预计回款 ${formatMoney(options.fullSale.soldAmount)}，卖出后现金储备 ${formatMoney(options.savingsAfterFull)}。</span>
+          </button>
+          <button class="choice-button rescue-choice is-decline" data-action="cash-rescue-choice" data-choice="decline">
+            <strong>保留持仓</strong>
+            <span>不卖出基金，本局在本月结束。</span>
+          </button>
+        </div>
+      </div>
+    `,
+    "cash-rescue-backdrop",
+  );
+}
+
+function handleCashRescueChoice(choice) {
+  const transition = player?.pendingTransition;
+  const rescue = transition?.cashRescue;
+  if (!transition || !rescue || rescue.handled) return;
+
+  if (choice === "decline") {
+    rescue.handled = true;
+    rescue.outcome = "declined";
+    player.cashRescueHistory = Array.isArray(player.cashRescueHistory) ? player.cashRescueHistory : [];
+    player.cashRescueHistory.push({
+      month: player.currentMonth,
+      outcome: "declined",
+      deficit: Math.max(0, -player.savings),
+      holdingValue: getCashRescueOptions().holdingValue,
+      savingsAfter: player.savings,
+    });
+    player.history.push({
+      month: player.currentMonth,
+      entryType: "cash_rescue_declined",
+      eventTitle: "保留基金持仓",
+      category: "investment",
+      choice: "不卖出基金",
+      effectLine: "现金缺口没有填补，本局结束。",
+      savingsAfter: player.savings,
+      bufferAfter: calculateBuffer(),
+    });
+    saveGame();
+    closeModal();
+    finishMonthTransition();
+    return;
+  }
+
+  const options = getCashRescueOptions();
+  const plan = getDcaPlan();
+  if (!options.eligible || !plan) return;
+  const savingsBeforeRescue = player.savings;
+  const ratio = choice === "all" ? 1 : options.partialRatio;
+  const action = choice === "all" ? "emergency_sell_all" : "emergency_sell_partial";
+  const stage = marketTrendStage(ensureMarketState().trend);
+  const soldAmount = sellDcaHolding(plan, ratio, stage, { action, emergency: true });
+  const lastSale = plan.actionHistory[plan.actionHistory.length - 1];
+  const soldAll = getInvestmentHoldingStatus(plan) === "sold_all";
+  plan.lastAction = action;
+
+  rescue.handled = true;
+  rescue.outcome = soldAll ? "sold_all" : "sold_partial";
+  rescue.soldAmount = soldAmount;
+  rescue.soldPrincipal = lastSale?.principal || 0;
+  rescue.savingsAfter = player.savings;
+  transition.endReason = player.savings < 0
+    ? "cash_broken"
+    : player.currentMonth >= player.maxMonth
+      ? "completed"
+      : null;
+  transition.marketQuoteDue = false;
+  transition.marketQuoteHandled = true;
+
+  const market = ensureMarketState();
+  market.tradedMonth = player.currentMonth;
+  market.lastViewedMonth = player.currentMonth;
+  market.lastQuoteMonth = player.currentMonth;
+  market.previousQuoteNav = market.nav;
+  recordSuccessfulCashRescue({
+    outcome: rescue.outcome,
+    soldAmount,
+    soldPrincipal: rescue.soldPrincipal,
+    savingsBeforeRescue,
+    savingsAfter: player.savings,
+    nav: plan.nav,
+  });
+  trackEvent("cash_game_cash_rescue_resolved", {
+    month: player.currentMonth,
+    sale_type: rescue.outcome,
+    result: player.savings >= 0 ? "continued" : "cash_broken",
+  });
+  saveGame();
+  closeModal();
+  renderCashRescueResult(rescue);
+}
+
+function recordSuccessfulCashRescue(entry) {
+  const bufferAfter = calculateBuffer();
+  player.cashRescueHistory = Array.isArray(player.cashRescueHistory) ? player.cashRescueHistory : [];
+  player.cashRescueHistory.push({ month: player.currentMonth, ...entry, bufferAfter });
+
+  const snapshot = player.monthlySnapshots?.[player.monthlySnapshots.length - 1];
+  if (snapshot && Number(snapshot.month) === Number(player.currentMonth)) {
+    snapshot.savingsBeforeRescue = entry.savingsBeforeRescue;
+    snapshot.cashRescueProceeds = entry.soldAmount;
+    snapshot.savingsAfterRescue = entry.savingsAfter;
+    snapshot.bufferAfterRescue = bufferAfter;
+    snapshot.savingsAfterMonth = entry.savingsAfter;
+    snapshot.bufferAfterMonth = bufferAfter;
+  }
+
+  const actionLabel = entry.outcome === "sold_all" ? "全部卖出基金" : "卖出部分基金";
+  player.history.push({
+    month: player.currentMonth,
+    entryType: "cash_rescue",
+    eventTitle: "应急卖出基金",
+    category: "investment",
+    choice: actionLabel,
+    effectLine: `${actionLabel}，回款 ${formatMoney(entry.soldAmount)}。`,
+    savingsDelta: entry.soldAmount,
+    savingsAfter: entry.savingsAfter,
+    bufferAfter,
+    realizedProfit: entry.soldAmount - entry.soldPrincipal,
+  });
+}
+
+function renderCashRescueResult(rescue) {
+  const profit = (rescue.soldAmount || 0) - (rescue.soldPrincipal || 0);
+  const resultLabel = profit >= 0 ? `实现盈利 ${formatMoney(profit)}` : `实现亏损 ${formatMoney(Math.abs(profit))}`;
+  const continueLabel = player.pendingTransition?.endReason === "completed" ? "查看本局结果" : "继续游戏";
+  openModal(
+    `
+      <div class="cash-rescue-card cash-rescue-result">
+        <div class="cash-rescue-head is-success">
+          <span>应急处置完成</span>
+          <h2>现金缺口已经填补</h2>
+          <p>${rescue.outcome === "sold_all" ? "基金持仓已经全部卖出。" : "基金仍保留部分持仓。"}</p>
+        </div>
+        <div class="cash-rescue-result-main">
+          <span>卖出回款</span>
+          <strong>+${formatMoney(rescue.soldAmount)}</strong>
+          <small>${escapeHtml(resultLabel)}</small>
+        </div>
+        <div class="cash-rescue-result-balance">
+          <span>当前现金储备</span>
+          <strong>${formatMoney(player.savings)}</strong>
+          <small>安全垫 ${formatBuffer(calculateBuffer())} 个月</small>
+        </div>
+        <div class="modal-actions">
+          <button class="button primary" data-action="continue-cash-rescue">${continueLabel}</button>
+        </div>
+      </div>
+    `,
+    "cash-rescue-backdrop",
+  );
+}
+
+function continueAfterCashRescue() {
+  closeModal();
+  finishMonthTransition();
+}
+
+function showPendingMarketQuoteOrFinish() {
+  const transition = player?.pendingTransition;
+  if (!transition) return;
+  if (transition.cashRescue && !transition.cashRescue.handled) {
+    window.setTimeout(renderCashRescue, 120);
+    return;
+  }
+  if (transition.marketQuoteDue && !transition.marketQuoteHandled) {
+    window.setTimeout(renderMarketQuote, 120);
+    return;
+  }
   finishMonthTransition();
 }
 
 function finishMonthTransition() {
   const transition = player?.pendingTransition;
   if (!player || !transition) return;
+  if (transition.cashRescue && !transition.cashRescue.handled) {
+    showPendingMarketQuoteOrFinish();
+    return;
+  }
+  if (transition.marketQuoteDue && !transition.marketQuoteHandled) {
+    showPendingMarketQuoteOrFinish();
+    return;
+  }
   player.pendingTransition = null;
   player.pendingEchoes = [];
 
@@ -2314,6 +3044,7 @@ function finishMonthTransition() {
   }
 
   player.currentMonth = transition.nextMonth;
+  advanceMarketToMonth(player.currentMonth);
   saveGame();
   closeModal();
   renderGamePage(nextMonthMessage(transition.recoveryMessages || []));
@@ -2322,12 +3053,19 @@ function finishMonthTransition() {
 function createQuickFeedback(summary) {
   const incomeDelta = summary.currentIncome - (summary.incomeBefore ?? summary.recurringIncome);
   const expenseDelta = summary.currentExpense - (summary.expenseBefore ?? summary.recurringExpense);
-  const impactRows = [];
+  const detailRows = [];
 
-  if (summary.reserveDelta) impactRows.push({ label: "现金储备", value: formatSignedMoney(summary.reserveDelta) });
-  if (incomeDelta) impactRows.push({ label: incomeDelta > 0 ? "本月收入" : "收入影响", value: formatSignedMoney(incomeDelta) });
-  if (expenseDelta) impactRows.push({ label: expenseDelta > 0 ? "支出增加" : "支出减少", value: formatSignedMoney(expenseDelta) });
-  if (!impactRows.length) impactRows.push({ label: "本月现金流", value: formatSignedMoney(summary.monthlyNetCashflow) });
+  if (summary.reserveDelta) detailRows.push({ label: "一次性储备影响", value: formatSignedMoney(summary.reserveDelta) });
+  if (incomeDelta) detailRows.push({ label: incomeDelta > 0 ? "收入增加" : "收入减少", value: formatSignedMoney(incomeDelta) });
+  if (expenseDelta) detailRows.push({ label: expenseDelta > 0 ? "支出增加" : "支出减少", value: formatSignedMoney(expenseDelta) });
+  if (summary.investmentContribution) detailRows.push({ label: "投资投入", value: formatSignedMoney(-summary.investmentContribution) });
+  if (summary.investmentContributionSkipped) {
+    detailRows.push({ label: "定投暂停", value: `本月未投入 ${formatMoney(summary.investmentContributionSkipped)}` });
+  }
+  const impactRows = [
+    { label: "本月合计", value: formatSignedMoney(summary.savingsDelta) },
+    ...detailRows.slice(0, 1),
+  ];
 
   const crossedThreshold = [3, 1, 0].find(
     (threshold) => summary.bufferBefore >= threshold && summary.bufferAfterMonth < threshold,
@@ -2386,7 +3124,7 @@ function showTurnFeedback(feedback, options = {}) {
     }
     ${
       feedback.wellbeingCost
-        ? `<div class="turn-feedback-life-cost">生活体验 -${feedback.wellbeingCost} 分 · ${escapeHtml(feedback.wellbeingReason)}</div>`
+        ? `<div class="turn-feedback-life-cost"><strong>生活体验 -${feedback.wellbeingCost} 分</strong><span>${escapeHtml(feedback.wellbeingReason)}</span></div>`
         : ""
     }
     <div class="turn-feedback-footer">
@@ -2468,45 +3206,6 @@ function scheduleCarFollowUps() {
   });
 }
 
-function maybeTriggerDcaMarketEvent() {
-  const plan = getDcaPlan();
-  if (!plan || plan.status === "sold_all") return;
-  if (getDcaHoldingPrincipal(plan) <= 0) return;
-
-  if (!Number.isFinite(plan.recoveryMonth)) {
-    plan.recoveryMonth = getDcaRecoveryMonth(plan.startMonth || player.currentMonth);
-  }
-
-  if (!plan.recoveryTriggered && player.currentMonth >= plan.recoveryMonth) {
-    plan.recoveryTriggered = true;
-    plan.marketStage = "recovered";
-    plan.currentReturnRate = getDcaMarketState("recovered").returnRate;
-    plan.pendingMarketStage = "recovered";
-    plan.overvaluedMonth = getDcaOvervaluedMonth(player.currentMonth);
-    saveGame();
-    window.setTimeout(() => renderDcaMarketCard(plan, "recovered"), 350);
-    return;
-  }
-
-  if (plan.recoveryTriggered && !Number.isFinite(plan.overvaluedMonth)) {
-    plan.overvaluedMonth = getDcaOvervaluedMonth(plan.recoveryMonth || player.currentMonth);
-  }
-
-  if (
-    plan.recoveryTriggered &&
-    !plan.overvaluedTriggered &&
-    player.currentMonth >= plan.overvaluedMonth &&
-    getDcaHoldingPrincipal(plan) > 0
-  ) {
-    plan.overvaluedTriggered = true;
-    plan.marketStage = "overvalued";
-    plan.currentReturnRate = getDcaMarketState("overvalued").returnRate;
-    plan.pendingMarketStage = "overvalued";
-    saveGame();
-    window.setTimeout(() => renderDcaMarketCard(plan, "overvalued"), 350);
-  }
-}
-
 function updateLowestSavingsAndBuffer() {
   const buffer = calculateBuffer();
   player.lowestSavings = Math.min(player.lowestSavings, player.savings);
@@ -2571,6 +3270,7 @@ function addMonthlySnapshot(summary, scheduledEchoes = []) {
     category: summary.category,
     choice: summary.choiceLabel,
     protectionReduction: summary.protectionReduction || 0,
+    savingsDelta: summary.savingsAfterSettlement - summary.savingsBefore,
     savingsAfter: summary.savingsAfterSettlement,
     bufferAfter: summary.bufferAfterSettlement,
   });
@@ -2592,16 +3292,22 @@ function addMonthlySnapshot(summary, scheduledEchoes = []) {
 
 function getHistorySummary(item) {
   const parts = [];
-  if (item.entryType === "follow_up") parts.push(item.effectLine || "后续影响已生效");
+  const specialEntryTypes = ["follow_up", "cash_rescue", "cash_rescue_unavailable", "cash_rescue_declined"];
+  if (specialEntryTypes.includes(item.entryType)) {
+    parts.push(item.effectLine || "后续影响已生效");
+  }
   if (item.choice) parts.push(`选择：${item.choice}`);
-  else if (item.entryType !== "follow_up") parts.push(categoryLabel(item.category));
+  else if (!specialEntryTypes.includes(item.entryType)) parts.push(categoryLabel(item.category));
   if (item.protectionReduction) parts.push(`保障少花 ${formatMoney(item.protectionReduction)}`);
+  if (Number.isFinite(item.savingsDelta)) parts.push(`本月合计 ${formatSignedMoney(item.savingsDelta)}`);
   if (item.bufferAfter < 1) parts.push("安全垫进入高压区");
   return parts.join(" · ");
 }
 
 function getHistoryTone(item) {
   if (item.protectionReduction) return "is-protected";
+  if (item.entryType === "cash_rescue") return "is-good";
+  if (["cash_rescue_unavailable", "cash_rescue_declined"].includes(item.entryType)) return "is-danger";
   if (item.bufferAfter < 1) return "is-danger";
   if (item.choice) return "is-choice";
   if (item.entryType === "follow_up") return "is-choice";
@@ -2669,7 +3375,6 @@ function isEventEligibleForIdentity(event) {
 }
 
 function getDefaultWeight(event) {
-  if (event.id === "index_dca_choice" && player?.currentMonth <= 10) return 2.6;
   if (event.group === "interest") return 0.7;
   if (["temporary_unemployment", "elder_hospital"].includes(event.id)) return 0.6;
   if (["salary_cut", "insurance_gap"].includes(event.id)) return 0.8;
@@ -2715,7 +3420,6 @@ function getEventForCurrentPosition() {
   );
   const eligiblePool = pools.filter((event) => {
     if (!isEventEligibleForIdentity(event)) return false;
-    if (!isDcaEventAllowed(event)) return false;
     if (!isEventAllowedByFrequency(event)) return false;
     if (hasActiveEvent(event.id)) return false;
     return true;
@@ -2723,29 +3427,9 @@ function getEventForCurrentPosition() {
   const fallbackPool = eventCards.filter((event) => {
     if (isCareerEvent(event)) return false;
     if (!isEventEligibleForIdentity(event)) return false;
-    if (!isDcaEventAllowed(event)) return false;
     return isEventAllowedByFrequency(event) && !hasActiveEvent(event.id);
   });
   return weightedRandomItem(eligiblePool.length ? eligiblePool : fallbackPool);
-}
-
-function getEarlyDcaEvent() {
-  const event = eventCards.find((item) => item.id === "index_dca_choice");
-  if (
-    !event ||
-    getDcaPlan() ||
-    player.currentMonth > dcaTiming.entryWindowEndMonth ||
-    !isEventAllowedByFrequency(event) ||
-    hasActiveEvent(event.id)
-  ) {
-    return null;
-  }
-  return event;
-}
-
-function isDcaEventAllowed(event) {
-  if (event.id !== "index_dca_choice") return true;
-  return Boolean(getEarlyDcaEvent());
 }
 
 function nextMonthMessage(recoveryMessages = []) {
@@ -3014,9 +3698,14 @@ function categoryGlyph(category) {
 }
 
 function getSurvivalScore() {
-  return window.CashGameCore.calculateSurvivalScore({
+  return getSurvivalScoreBreakdown().total;
+}
+
+function getSurvivalScoreBreakdown() {
+  return window.CashGameCore.calculateSurvivalScoreBreakdown({
     completedMonths: getCompletedMonths(),
     maxMonth: player.maxMonth,
+    initialBuffer: player.initialBuffer,
     finalBuffer: calculateBuffer(),
     savings: player.savings,
     wellbeingPenalty: getWellbeingPenalty(),
@@ -3165,31 +3854,210 @@ function getCompletedMonths() {
 }
 
 function getDcaPlan() {
-  return player?.longTermPlans?.find((plan) => plan.id === "index_dca_001");
+  return player?.investment || player?.longTermPlans?.find((plan) => plan.id === "index_dca_001") || null;
+}
+
+function ensureMarketState() {
+  if (!player) return null;
+  const normalized = window.CashGameCore.normalizeMarketState(player.market, getDcaPlan(), player.currentMonth);
+  if (player.market && normalized) {
+    Object.assign(player.market, normalized);
+  } else if (normalized) {
+    player.market = normalized;
+  } else {
+    player.market = window.CashGameCore.createInitialMarketState(
+      randomFloat(),
+      randomFloat(),
+      randomFloat(),
+      player.currentMonth,
+    );
+  }
+  return player.market;
+}
+
+function advanceMarketToMonth(targetMonth) {
+  let market = ensureMarketState();
+  const normalizedTarget = Math.max(1, Math.round(Number(targetMonth) || 1));
+  while (market.lastUpdatedMonth < normalizedTarget) {
+    market = window.CashGameCore.advanceMarketState(market, {
+      month: market.lastUpdatedMonth + 1,
+      regimeRandom: randomFloat(),
+      trendRandom: randomFloat(),
+      moveRandom: randomFloat(),
+    });
+  }
+  player.market = market;
+  syncInvestmentWithMarket();
+  return market;
+}
+
+function syncInvestmentWithMarket() {
+  const market = ensureMarketState();
+  const plan = getDcaPlan();
+  if (!market || !plan) return;
+  plan.previousNav = Number(plan.nav) || market.previousNav;
+  plan.nav = market.nav;
+  plan.valuation = market.valuation;
+  plan.marketStage = marketTrendStage(market.trend);
+  plan.currentReturnRate = plan.entryNav > 0 ? plan.nav / plan.entryNav - 1 : 0;
+  plan.lastEventMonth = player.currentMonth;
+  plan.priceHistory = Array.isArray(plan.priceHistory) ? plan.priceHistory : [];
+  const point = {
+    month: market.lastUpdatedMonth,
+    nav: market.nav,
+    stage: plan.marketStage,
+    valuation: market.valuation,
+  };
+  const existingIndex = plan.priceHistory.findIndex((item) => Number(item.month) === point.month);
+  if (existingIndex >= 0) plan.priceHistory[existingIndex] = point;
+  else plan.priceHistory.push(point);
+}
+
+function marketTrendStage(trend) {
+  if (trend === "up") return "market_rise";
+  if (trend === "down") return "market_drop";
+  return "market_flat";
+}
+
+function marketTrendTitle(trend) {
+  if (trend === "up") return "本月净值上涨";
+  if (trend === "down") return "本月净值下跌";
+  return "本月窄幅波动";
+}
+
+function marketTrendLabel(trend) {
+  if (trend === "up") return "上涨";
+  if (trend === "down") return "下跌";
+  return "震荡";
+}
+
+function marketValuationLabel(valuation) {
+  if (valuation === "undervalued") return "低估";
+  if (valuation === "overvalued") return "高估";
+  return "正常估值";
+}
+
+function marketMisterButtonHtml() {
+  const market = ensureMarketState();
+  return `
+    <button class="market-mister-button" data-action="market-quote" aria-label="查看市场先生报价">
+      <span class="market-mister-icon" aria-hidden="true">市</span>
+      <span><strong>市场先生</strong><small>${market.nav.toFixed(2)} · ${marketTrendLabel(market.trend)}</small></span>
+    </button>
+  `;
+}
+
+function shouldQueueMarketQuote(endReason) {
+  const market = ensureMarketState();
+  if (!market || endReason === "cash_broken") return false;
+
+  const riseStreak = window.CashGameCore.countConsecutiveMarketRises(market.history);
+  const latestMove = window.CashGameCore.getLatestMarketMove(market.history);
+  if (riseStreak < investmentTiming.riseStreakMonths) market.riseStreakQuoteActive = false;
+  const riseStreakDue = window.CashGameCore.shouldTriggerRiseStreakQuote(
+    market,
+    investmentTiming.riseStreakMonths,
+  );
+
+  if (market.lastViewedMonth === player.currentMonth || market.lastQuoteMonth === player.currentMonth) {
+    if (riseStreakDue) market.riseStreakQuoteActive = true;
+    return false;
+  }
+  if (debugForcedMarketQuote) {
+    debugForcedMarketQuote = false;
+    if (riseStreakDue) market.riseStreakQuoteActive = true;
+    return true;
+  }
+  if (latestMove === "down") return false;
+  if (riseStreakDue) {
+    market.riseStreakQuoteActive = true;
+    return true;
+  }
+  if (riseStreak >= investmentTiming.riseStreakMonths && market.riseStreakQuoteActive) return false;
+  return randomFloat() < investmentTiming.quoteChance;
+}
+
+function syncLatestSnapshotAfterMarketAction() {
+  if (!player) return;
+  const snapshot = player.monthlySnapshots?.[player.monthlySnapshots.length - 1];
+  if (snapshot && Number(snapshot.month) === Number(player.currentMonth)) {
+    snapshot.savingsAfterMonth = player.savings;
+    snapshot.savingsAfterSettlement = player.savings;
+    snapshot.savingsDelta = player.savings - snapshot.savingsBefore;
+    snapshot.bufferAfterMonth = calculateBuffer();
+    snapshot.bufferAfterSettlement = snapshot.bufferAfterMonth;
+    snapshot.bufferDelta = snapshot.bufferAfterMonth - snapshot.bufferBefore;
+  }
+  const historyEntry = [...(player.history || [])]
+    .reverse()
+    .find((item) => item.entryType === "event" && Number(item.month) === Number(player.currentMonth));
+  if (historyEntry && snapshot) {
+    historyEntry.savingsAfter = player.savings;
+    historyEntry.savingsDelta = player.savings - snapshot.savingsBefore;
+    historyEntry.bufferAfter = calculateBuffer();
+  }
+  updateLowestSavingsAndBuffer();
+}
+
+function getInvestmentHoldingStatus(plan) {
+  if (!plan) return "sold_all";
+  if (plan.holdingStatus === "sold_all" || plan.status === "sold_all") return "sold_all";
+  return "holding";
+}
+
+function getInvestmentDcaStatus(plan) {
+  if (!plan) return "never_started";
+  if (["never_started", "active", "paused"].includes(plan.dcaStatus)) return plan.dcaStatus;
+  if (plan.status === "active") return "active";
+  const actionNames = new Set((plan.actionHistory || []).map((item) => item?.action));
+  const hadDca =
+    plan.id === "index_dca_001" ||
+    Number(plan.monthlyDcaAmount || plan.monthlyAmount) > 0 ||
+    ["start_dca", "monthly_dca", "pause_dca", "resume_dca"].some((action) => actionNames.has(action));
+  return hadDca ? "paused" : "never_started";
+}
+
+function syncInvestmentLegacyStatus(plan) {
+  if (!plan) return;
+  plan.holdingStatus = getInvestmentHoldingStatus(plan);
+  plan.dcaStatus = getInvestmentDcaStatus(plan);
+  plan.status =
+    plan.holdingStatus === "sold_all" ? "sold_all" : plan.dcaStatus === "active" ? "active" : "paused";
 }
 
 function shouldShowDcaPlanCard(plan) {
-  if (!plan || plan.status === "sold_all") return false;
-  return getDcaHoldingPrincipal(plan) > 0 || plan.status === "active";
+  if (!plan || getInvestmentHoldingStatus(plan) === "sold_all") return false;
+  return getDcaHoldingPrincipal(plan) > 0 || getInvestmentDcaStatus(plan) === "active";
 }
 
 function dcaPlanCardTitle(plan) {
-  if (plan.status === "paused") return `投资持仓：${plan.name}`;
-  return `正在进行的长期计划：${plan.name}`;
+  if (getInvestmentDcaStatus(plan) !== "active") return `投资持仓：${plan.fundName || plan.name}`;
+  return `正在定投：${plan.fundName || plan.name}`;
 }
 
-function getDcaRecoveryMonth(startMonth = player.currentMonth) {
-  return window.CashGameCore.getDcaMilestoneMonth(
-    startMonth,
-    randomInt(dcaTiming.recoveryDelayMin, dcaTiming.recoveryDelayMax),
-  );
+function getMonthlyInvestmentContribution() {
+  const investment = getDcaPlan();
+  if (!investment || getInvestmentDcaStatus(investment) !== "active") return 0;
+  return Math.max(0, Math.round(Number(investment.monthlyDcaAmount ?? investment.monthlyAmount) || 0));
 }
 
-function getDcaOvervaluedMonth(startMonth = player.currentMonth) {
-  return window.CashGameCore.getDcaMilestoneMonth(
-    startMonth,
-    randomInt(dcaTiming.overvaluedDelayMin, dcaTiming.overvaluedDelayMax),
-  );
+function recordInvestmentPurchase(investment, amount, action = "buy", metadata = {}) {
+  if (!investment) return 0;
+  const purchase = window.CashGameCore.calculateFundPurchase(amount, investment.nav);
+  if (!purchase.investedAmount) return 0;
+  investment.shares = Math.max(0, Number(investment.shares) || 0) + purchase.purchasedShares;
+  investment.totalInvested = (investment.totalInvested || 0) + purchase.investedAmount;
+  investment.holdingPrincipal = getDcaHoldingPrincipal(investment) + purchase.investedAmount;
+  investment.actionHistory = Array.isArray(investment.actionHistory) ? investment.actionHistory : [];
+  investment.actionHistory.push({
+    month: player.currentMonth,
+    action,
+    amount: purchase.investedAmount,
+    nav: investment.nav,
+    shares: purchase.purchasedShares,
+    ...metadata,
+  });
+  return purchase.investedAmount;
 }
 
 function getDcaHoldingPrincipal(plan) {
@@ -3200,6 +4068,9 @@ function getDcaHoldingPrincipal(plan) {
 
 function getDcaCurrentReturnRate(plan) {
   if (!plan) return 0;
+  if (Number.isFinite(plan.nav) && Number.isFinite(plan.entryNav) && plan.entryNav > 0) {
+    return plan.nav / plan.entryNav - 1;
+  }
   if (Number.isFinite(plan.currentReturnRate)) return plan.currentReturnRate;
 
   const endedMonth = getCompletedMonths();
@@ -3209,80 +4080,169 @@ function getDcaCurrentReturnRate(plan) {
 }
 
 function getDcaHoldingValue(plan, returnRate = getDcaCurrentReturnRate(plan)) {
+  if (Number.isFinite(plan?.shares)) {
+    const entryNav = Math.max(0.01, Number(plan.entryNav) || 3);
+    const nav = Number.isFinite(returnRate) ? entryNav * (1 + returnRate) : Number(plan.nav) || entryNav;
+    return Math.max(0, Math.round(plan.shares * nav));
+  }
   return Math.max(0, Math.round(getDcaHoldingPrincipal(plan) * (1 + returnRate)));
 }
 
 function getDcaMarketState(stage, plan = null) {
-  const continueChoice =
-    plan?.status === "active"
-      ? { id: "hold", label: "继续定投", text: "保持每月投入和当前持仓。" }
-      : { id: "hold", label: "继续持有", text: "保持当前持仓。" };
-
-  if (stage === "overvalued") {
-    return {
-      stage: "overvalued",
+  const returnRate = getDcaCurrentReturnRate(plan);
+  const monthlyAmount = Math.max(1, Number(plan?.monthlyDcaAmount || plan?.monthlyAmount) || 2000);
+  const dcaStatus = getInvestmentDcaStatus(plan);
+  const isActive = dcaStatus === "active";
+  const continueChoice = isActive
+    ? { id: "hold", label: "继续定投", text: `下个月仍按每月 ${formatMoney(monthlyAmount)} 买入。` }
+    : { id: "hold", label: "继续持有", text: "保留当前持仓，不增加投入。" };
+  const addChoice = { id: "add_once", label: "追加买入", text: `从现金储备取出 ${formatMoney(4000)}买入。` };
+  const pauseChoice = { id: "pause_dca", label: "暂停定投", text: "暂停每月买入，保留当前持仓。" };
+  const resumeChoice = { id: "resume_dca", label: "恢复定投", text: `恢复每月 ${formatMoney(monthlyAmount)} 买入。` };
+  const startChoice = { id: "start_dca", label: "开始定投", text: `从下个月开始每月 ${formatMoney(monthlyAmount)} 买入。` };
+  const sellHalfChoice = {
+    id: "sell_half",
+    label: "卖出一半",
+    text: isActive
+      ? "卖出约 50% 持仓，回款进入现金储备，同时暂停后续定投。"
+      : "卖出约 50% 持仓，回款进入现金储备。",
+  };
+  const sellAllChoice = {
+    id: "sell_all",
+    label: "全部卖出",
+    text: dcaStatus === "never_started"
+      ? "卖出全部持仓，回款进入现金储备。"
+      : "卖出全部持仓，回款进入现金储备，定投同时结束。",
+  };
+  const stageConfig = {
+    market_rise: {
+      title: "净值上涨",
+      description: "宽基指数基金本月净值上涨。",
+      valuationLabel: marketValuationLabel(ensureMarketState().valuation),
+    },
+    market_drop: {
+      title: "净值下跌",
+      description: "宽基指数基金本月净值下跌。",
+      valuationLabel: marketValuationLabel(ensureMarketState().valuation),
+    },
+    market_flat: {
+      title: "市场震荡",
+      description: "宽基指数基金本月窄幅波动。",
+      valuationLabel: marketValuationLabel(ensureMarketState().valuation),
+    },
+    low_drop: {
+      title: "净值下跌",
+      description: "宽基指数基金净值继续下跌。",
+      valuationLabel: "低估",
+    },
+    low_oscillation: {
+      title: "低位震荡",
+      description: "宽基指数基金仍在低估区间波动。",
+      valuationLabel: "低估",
+    },
+    recovered: {
+      title: "估值修复",
+      description: "宽基指数基金回到正常估值区间。",
+      valuationLabel: "正常",
+    },
+    normal_oscillation: {
+      title: "市场波动",
+      description: "宽基指数基金在正常估值区间波动。",
+      valuationLabel: "正常",
+    },
+    overvalued: {
       title: "阶段高估",
-      description: "市场进入阶段性高估区域。",
-      returnRate: 0.18,
-      choices: [
-        { id: "sell_half", label: "卖出一半", text: "卖出约 50% 持仓，回收现金。" },
-        { id: "sell_all", label: "全部卖出", text: "卖出全部持仓，回收现金。" },
-        continueChoice,
-      ],
-    };
-  }
-
+      description: "宽基指数基金进入阶段高估区间。",
+      valuationLabel: "高估",
+    },
+    pullback: {
+      title: "市场回落",
+      description: "宽基指数基金净值从前期位置回落。",
+      valuationLabel: "正常",
+    },
+  };
+  const config = stageConfig[stage] || stageConfig.low_oscillation;
+  const dcaControlChoice = isActive ? pauseChoice : dcaStatus === "paused" ? resumeChoice : startChoice;
+  const choices = [continueChoice, addChoice, dcaControlChoice, sellHalfChoice, sellAllChoice];
   return {
-    stage: "recovered",
-    title: "估值修复",
-    description: "市场从低估区域回到正常估值附近。",
-    returnRate: 0.06,
-    choices: [
-      { id: "sell_half", label: "卖出一半", text: "卖出约 50% 持仓，回收现金。" },
-      continueChoice,
-      { id: "stop_dca", label: "停止定投", text: "停止后续投入，保留已有持仓。" },
-    ],
+    stage,
+    ...config,
+    returnRate,
+    choices,
   };
 }
 
-function sellDcaHolding(plan, ratio, returnRate) {
+function sellDcaHolding(plan, ratio, stage = null, options = {}) {
+  const dcaStatusBeforeSale = getInvestmentDcaStatus(plan);
   const holdingPrincipal = getDcaHoldingPrincipal(plan);
-  const sale = window.CashGameCore.calculateDcaSale(holdingPrincipal, ratio, returnRate);
+  const sale = window.CashGameCore.calculateFundSale({
+    shares: plan.shares,
+    holdingPrincipal,
+    ratio,
+    nav: plan.nav,
+  });
   const { soldPrincipal, soldAmount } = sale;
 
+  plan.shares = sale.remainingShares;
   plan.holdingPrincipal = sale.remainingPrincipal;
   plan.soldPrincipal = (plan.soldPrincipal || 0) + soldPrincipal;
   plan.realizedAmount = (plan.realizedAmount || 0) + soldAmount;
   plan.realizedProfit = (plan.realizedProfit || 0) + sale.realizedProfit;
   plan.lastSoldAmount = soldAmount;
+  plan.actionHistory = Array.isArray(plan.actionHistory) ? plan.actionHistory : [];
+  const saleAction = options.action || (ratio >= 1 ? "sell_all" : "sell_half");
+  plan.actionHistory.push({
+    month: player.currentMonth,
+    action: saleAction,
+    amount: soldAmount,
+    principal: soldPrincipal,
+    nav: plan.nav,
+    shares: sale.soldShares,
+    stage,
+    emergency: Boolean(options.emergency),
+  });
   player.savings += soldAmount;
   removeDcaMonthlyEffect();
 
   if (plan.holdingPrincipal <= 0) {
     plan.holdingPrincipal = 0;
-    plan.status = "sold_all";
+    plan.holdingStatus = "sold_all";
+    if (dcaStatusBeforeSale === "active") plan.dcaStatus = "paused";
   } else {
-    plan.status = "paused";
-    plan.pauseCount = (plan.pauseCount || 0) + 1;
+    plan.holdingStatus = "holding";
+    if (dcaStatusBeforeSale === "active") {
+      plan.dcaStatus = "paused";
+      plan.pauseCount = (plan.pauseCount || 0) + 1;
+    }
   }
+  syncInvestmentLegacyStatus(plan);
 
   updateLowestSavingsAndBuffer();
   return soldAmount;
 }
 
 function getDcaResultLabel(plan) {
-  if (plan.status === "sold_all") return "已卖出";
+  if (getInvestmentHoldingStatus(plan) === "sold_all") return "已卖出";
+  if (plan.marketStage === "market_rise") return "净值上涨";
+  if (plan.marketStage === "market_drop") return "净值下跌";
+  if (plan.marketStage === "market_flat") return "市场震荡";
   if (plan.marketStage === "overvalued") return "阶段高估";
   if (plan.marketStage === "recovered") return "估值修复";
-  if (plan.status === "paused") return "暂停后持有";
+  if (plan.marketStage === "pullback") return "市场回落";
+  if (plan.marketStage === "normal_oscillation") return "正常估值";
+  if (plan.marketStage === "low_drop") return "低估下跌";
+  if (plan.marketStage === "low_oscillation") return "低位震荡";
+  if (getInvestmentDcaStatus(plan) === "paused") return "暂停后持有";
+  if (getInvestmentDcaStatus(plan) === "never_started") return "单笔持有";
   return "仍在持有";
 }
 
 function dcaPlanStatusLine(plan) {
   const parts = [
-    `每月投入：${formatMoney(plan.monthlyAmount)}`,
-    `累计投入：${formatMoney(plan.totalInvested || 0)}`,
-    `当前状态：${planStatusText(plan.status)}`,
+    `净值：${Number(plan.nav || 3).toFixed(2)} 元`,
+    `持仓：${formatMoney(getDcaHoldingValue(plan))}`,
+    `每月投入：${formatMoney(plan.monthlyDcaAmount ?? plan.monthlyAmount)}`,
+    `当前状态：${investmentPlanStatusText(plan)}`,
   ];
 
   if ((plan.realizedAmount || 0) > 0) parts.push(`卖出回款：${formatMoney(plan.realizedAmount)}`);
@@ -3308,8 +4268,16 @@ function getTemporaryExpenseEffects() {
 }
 
 function formatEffectMonthlyAmount(effect) {
-  if (effect.target === "expense_percent") return formatPercent(effect.amount);
+  if (effect.target?.endsWith("_percent")) return formatPercent(effect.amount);
   return formatMoney(effect.amount);
+}
+
+function formatActiveEffectLine(effect, prefix = "常规月") {
+  const target = effect?.target?.startsWith("expense") ? "支出" : "收入";
+  const amount = effect?.target?.endsWith("_percent")
+    ? formatPercent(effect.amount)
+    : formatSignedMoney(effect.amount);
+  return `${prefix}${target} ${amount}${durationSuffix(effect.duration)}`;
 }
 
 function getPendingScheduledStatuses() {
@@ -3330,16 +4298,17 @@ function getPendingScheduledStatuses() {
           meta: `${remaining} 个月后生效 · 现金储备 ${formatSignedMoney(card.amount || 0)}`,
         };
       }
-      const target = card.activeEffect?.target === "expense" ? "常规月支出" : "常规月收入";
       return {
         title: card.title || "待生效影响",
-        meta: `${remaining} 个月后生效 · ${target} ${formatSignedMoney(card.activeEffect?.amount || 0)}${durationSuffix(card.activeEffect?.duration || 0)}`,
+        meta: `${remaining} 个月后生效 · ${formatActiveEffectLine(card.activeEffect, "常规月")}`,
       };
     });
 }
 
 function removeDcaMonthlyEffect() {
-  player.activeEffects = player.activeEffects.filter((effect) => effect.sourcePlanId !== "index_dca_001");
+  player.activeEffects = player.activeEffects.filter(
+    (effect) => effect.sourcePlanId !== "index_dca_001" && effect.sourcePlanId !== "index_fund_001",
+  );
 }
 
 function removeProtectionMonthlyEffect() {
@@ -3420,8 +4389,7 @@ function effectText(effect) {
     return "一项持续影响，结束时间未知";
   }
   if (effect.type === "schedule_active_effect") {
-    const target = effect.target === "expense" ? "常规月支出" : "常规月收入";
-    return `${effect.triggerDelay || 1} 个月后，${target} ${formatSignedMoney(effect.amount)}${durationSuffix(effect.duration)}`;
+    return `${effect.triggerDelay || 1} 个月后，${formatActiveEffectLine(effect, "常规月")}`;
   }
   if (effect.type === "schedule_savings_effect") {
     return `${effect.triggerDelay || 1} 个月后，现金储备 ${formatSignedMoney(effect.amount)}`;
@@ -3434,7 +4402,8 @@ function effectText(effect) {
   }
   if (effect.type === "bonus_invest_or_reserve") return bonusInvestOrReserveText(effect);
   if (effect.type === "invest_or_reserve") return investOrReserveText(effect.amount || 0, effect.investPercent || 0.5);
-  if (effect.type === "start_dca_plan") return `每月定投支出 +${effect.monthlyAmount} 元`;
+  if (effect.type === "start_fund_investment") return `现金储备 ${formatSignedMoney(-effect.initialAmount)}；买入指数基金`;
+  if (effect.type === "start_dca_plan") return `每月投资投入 ${formatSignedMoney(-effect.monthlyAmount)}`;
   if (effect.type === "start_protection_plan") return `常规月支出 +${effect.monthlyAmount} 元，持续 ${effect.duration} 个月；部分健康风险可减少储备损失`;
   if (effect.type === "career_course_plan") return `现金储备 -${effect.cost} 元`;
   if (effect.type === "buy_car") return "现金储备 -50000 元，月支出 +2500 元";
@@ -3470,8 +4439,7 @@ function choiceEffectText(effect) {
     return "一项持续影响，结束时间未知";
   }
   if (effect.type === "schedule_active_effect") {
-    const target = effect.target === "expense" ? "月支出" : "月收入";
-    return `${effect.triggerDelay || 1} 个月后，${target} ${formatSignedMoney(effect.amount)}${durationSuffix(effect.duration)}`;
+    return `${effect.triggerDelay || 1} 个月后，${formatActiveEffectLine(effect, "月")}`;
   }
   if (
     effect.type === "schedule_savings_effect" ||
@@ -3482,7 +4450,8 @@ function choiceEffectText(effect) {
   }
   if (effect.type === "bonus_invest_or_reserve") return bonusInvestOrReserveText(effect);
   if (effect.type === "invest_or_reserve") return investOrReserveText(effect.amount || 0, effect.investPercent || 0.5);
-  if (effect.type === "start_dca_plan") return `月支出 +${currencyFormatter.format(effect.monthlyAmount)} 元`;
+  if (effect.type === "start_fund_investment") return `现金储备 -${currencyFormatter.format(effect.initialAmount)} 元；买入指数基金`;
+  if (effect.type === "start_dca_plan") return `每月投资投入 -${currencyFormatter.format(effect.monthlyAmount)} 元`;
   if (effect.type === "start_protection_plan") return `月支出 +${currencyFormatter.format(effect.monthlyAmount)} 元，持续 ${effect.duration} 个月`;
   if (effect.type === "career_course_plan") return `现金储备 -${currencyFormatter.format(effect.cost)} 元`;
   if (effect.type === "buy_car") return "现金储备 -50,000 元；月支出 +2,500 元";
@@ -3526,7 +4495,13 @@ function getChoiceEffectScore(effect) {
   }
   if (effect.type === "bonus_invest_or_reserve") return 1;
   if (effect.type === "invest_or_reserve") return 1;
-  if (effect.type === "start_dca_plan" || effect.type === "start_protection_plan" || effect.type === "career_course_plan" || effect.type === "buy_car") return -1;
+  if (
+    effect.type === "start_fund_investment" ||
+    effect.type === "start_dca_plan" ||
+    effect.type === "start_protection_plan" ||
+    effect.type === "career_course_plan" ||
+    effect.type === "buy_car"
+  ) return -1;
   if (effect.type === "compound") {
     return effect.effects.reduce((sum, item) => sum + getChoiceEffectScore(item), 0);
   }
@@ -3540,7 +4515,7 @@ function bonusInvestOrReserveText(effect) {
 
 function investOrReserveText(amount, investPercent = 0.5) {
   const plan = getDcaPlan();
-  if (plan && plan.status === "active") {
+  if (plan && getInvestmentDcaStatus(plan) === "active") {
     const investAmount = Math.round(amount * investPercent);
     const reserveAmount = amount - investAmount;
     return `定投加码 ${formatMoney(investAmount)}；现金储备 +${currencyFormatter.format(reserveAmount)} 元`;
@@ -3551,7 +4526,7 @@ function investOrReserveText(amount, investPercent = 0.5) {
 function applyInvestOrReserve(amount, investPercent = 0.5) {
   const totalAmount = Math.round(amount || 0);
   const plan = getDcaPlan();
-  const canInvest = plan && plan.status === "active";
+  const canInvest = plan && getInvestmentDcaStatus(plan) === "active";
 
   if (!canInvest) {
     player.savings += totalAmount;
@@ -3560,8 +4535,7 @@ function applyInvestOrReserve(amount, investPercent = 0.5) {
 
   const investAmount = Math.round(totalAmount * investPercent);
   const reserveAmount = totalAmount - investAmount;
-  plan.totalInvested = (plan.totalInvested || 0) + investAmount;
-  plan.holdingPrincipal = getDcaHoldingPrincipal(plan) + investAmount;
+  recordInvestmentPurchase(plan, investAmount, "extra_buy");
   player.savings += reserveAmount;
 }
 
@@ -3571,6 +4545,14 @@ function planStatusText(status) {
   if (status === "sold_all") return "已卖出";
   if (status === "expired") return "已到期";
   return "未开始";
+}
+
+function investmentPlanStatusText(plan) {
+  if (getInvestmentHoldingStatus(plan) === "sold_all") return "已卖出";
+  const dcaStatus = getInvestmentDcaStatus(plan);
+  if (dcaStatus === "active") return "定投进行中";
+  if (dcaStatus === "paused") return "定投已暂停，继续持有";
+  return "单笔持有，尚未定投";
 }
 
 function formatMoney(value) {
@@ -3733,7 +4715,7 @@ function resumeLoadedGame() {
     window.setTimeout(showNextScheduledEcho, 120);
     return;
   }
-  if (player.pendingTransition) finishMonthTransition();
+  if (player.pendingTransition) showPendingMarketQuoteOrFinish();
 }
 
 document.addEventListener("click", (event) => {
@@ -3753,6 +4735,9 @@ document.addEventListener("click", (event) => {
       // 记录：玩家从海报首页进入身份筛选页。
       had_saved_game: savedGameAvailable,
     });
+    selectedMaxMonth = challengeLengths.includes(Number(debugParams.get("months")))
+      ? Number(debugParams.get("months"))
+      : DEFAULT_CHALLENGE_LENGTH;
     preloadGameVisuals();
     renderRandomIdentity();
   }
@@ -3823,9 +4808,18 @@ document.addEventListener("click", (event) => {
 
   if (action === "history") renderHistory();
 
+  if (action === "investment-history") renderInvestmentHistory();
+
   if (action === "game-menu") renderGameMenu();
 
   if (action === "debug-panel") renderDebugPanel();
+
+  if (action === "debug-market") {
+    debugForcedMarketQuote = true;
+    closeModal();
+    renderGamePage("下一次月度结算后将触发市场先生报价。", { skipEcho: true });
+    showToast("已安排下一次市场先生报价。");
+  }
 
   if (action === "debug-copy") copyDebugDiagnostic();
 
@@ -3847,9 +4841,18 @@ document.addEventListener("click", (event) => {
 
   if (action === "continue-echo") continueScheduledEcho();
 
+  if (action === "market-quote") renderMarketQuote();
+
+  if (action === "market-quote-choice") handleMarketQuoteChoice(target.dataset.choice);
+
+  if (action === "close-market-quote") closeMarketQuote();
+
+  if (action === "cash-rescue-choice") handleCashRescueChoice(target.dataset.choice);
+
+  if (action === "continue-cash-rescue") continueAfterCashRescue();
+
   if (action === "close-modal") closeModal();
 
-  if (action === "dca-market-choice") handleDcaMarketChoice(target.dataset.choice, target.dataset.stage);
 });
 
 document.addEventListener("submit", (event) => {
@@ -3902,6 +4905,9 @@ if (debugMode) {
   window.CashGameDebug = {
     forceNextEvent(eventId) {
       debugForcedEventId = eventId;
+    },
+    forceMarketQuote() {
+      debugForcedMarketQuote = true;
     },
     setSeed(seed) {
       debugSeedText = String(seed || "cash-game-debug");

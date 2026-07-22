@@ -28,8 +28,18 @@ test("运动员不会抽到客户、提成和公司福利语义事件", () => {
   assert.equal(rules.getWeightMultiplier("freelance_referral", "athlete"), 0.75);
 });
 
+test("咖啡店经营事件只进入咖啡主理人卡池", () => {
+  for (const eventId of ["cafe_blogger_promotion", "cafe_stray_cat"]) {
+    assert.equal(rules.isEligible(eventId, "cafe_owner"), true);
+    assert.equal(rules.isEligible(eventId, "small_shop_owner"), false);
+    assert.equal(rules.isEligible(eventId, "young_worker"), false);
+    assert.equal(rules.isEligible(eventId, "custom"), false);
+    assert.equal(rules.getWeightMultiplier(eventId, "cafe_owner"), 1.35);
+  }
+});
+
 test("普通生活事件对所有预设身份开放", () => {
-  for (const eventId of ["rent_up", "phone_replacement", "minor_illness", "family_trip_choice", "index_dca_choice"]) {
+  for (const eventId of ["rent_up", "phone_replacement", "minor_illness", "family_trip_choice"]) {
     for (const identityId of identityIds) assert.equal(rules.isEligible(eventId, identityId), true);
   }
 });

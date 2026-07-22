@@ -35,7 +35,6 @@ const ONCE_IDS = new Set([
   "elder_hospital",
   "insurance_gap",
   "temporary_unemployment",
-  "index_dca_choice",
   "career_course",
   "buy_car_choice",
   "emergency_fund_choice",
@@ -79,8 +78,7 @@ function weightedPick(random, items, weightFor) {
   return items.at(-1);
 }
 
-function defaultWeight(event, month) {
-  if (event.id === "index_dca_choice" && month <= 10) return 2.6;
+function defaultWeight(event) {
   if (event.group === "interest") return 0.7;
   if (["temporary_unemployment", "elder_hospital"].includes(event.id)) return 0.6;
   if (["salary_cut", "insurance_gap"].includes(event.id)) return 0.8;
@@ -97,7 +95,6 @@ function eventAllowed(state, event) {
   if (!careerEventRules.isEligible(event.id, state.identityId)) return false;
   if (eventCount(state, event.id) >= 1) return false;
   if (state.activeEffects.some((effect) => effect.sourceEventId === event.id)) return false;
-  if (event.id === "index_dca_choice" && (state.dca || state.month > 10)) return false;
   return true;
 }
 
@@ -109,23 +106,18 @@ function drawEvent(state, random) {
     drawnEventIds: state.draws.map((draw) => draw.id),
   });
   if (careerEvent) return careerEvent;
-  const dcaEvent = eventCards.find((event) => event.id === "index_dca_choice");
-  const dcaAvailable = dcaEvent && eventAllowed(state, dcaEvent);
-  if (dcaAvailable && state.month === Math.min(10, state.maxMonth)) return dcaEvent;
-
   const categories = MAP_CELLS[state.position];
   const pool = categories.flatMap((category) =>
     eventCards.filter((event) => event.category === category && !Array.isArray(event.careerIdentityIds)),
   );
   const eligible = pool.filter((event) => eventAllowed(state, event));
   const fallback = eventCards.filter((event) => !Array.isArray(event.careerIdentityIds) && eventAllowed(state, event));
-  if (dcaAvailable && state.month >= 6 && random() < 0.35) return dcaEvent;
   const candidates = eligible.length ? eligible : fallback;
   return weightedPick(
     random,
     candidates,
     (event) =>
-      (Number.isFinite(event.weight) ? event.weight : defaultWeight(event, state.month)) *
+      (Number.isFinite(event.weight) ? event.weight : defaultWeight(event)) *
       careerEventRules.getWeightMultiplier(event.id, state.identityId),
   );
 }
@@ -196,6 +188,7 @@ function estimateEffectValue(effect, state, monthsLeft) {
   }
   if (effect.type === "career_course_plan") return -effect.cost + 0.7 * 1500 * Math.min(12, monthsLeft);
   if (effect.type === "start_protection_plan") return -effect.monthlyAmount * Math.min(effect.duration, monthsLeft) + effect.maxReduction * 0.2;
+  if (effect.type === "start_fund_investment") return -effect.initialAmount * 0.1;
   if (effect.type === "start_dca_plan") return -effect.monthlyAmount * Math.min(6, monthsLeft) * 0.15;
   if (effect.type === "buy_car") return -50000 - 2500 * Math.min(12, monthsLeft);
   if (effect.type === "invest_or_reserve") return effect.amount;
@@ -301,17 +294,31 @@ function applyEffect(state, effect, card, random) {
     });
     return;
   }
-  if (effect.type === "start_dca_plan" && !state.dca) {
+  if (["start_fund_investment", "start_dca_plan"].includes(effect.type) && !state.dca) {
+    const initialAmount = effect.type === "start_fund_investment" ? effect.initialAmount : 0;
+    const monthlyAmount = effect.type === "start_dca_plan" ? effect.monthlyAmount : 0;
     state.dca = {
-      status: "active",
-      monthlyAmount: effect.monthlyAmount,
+      status: monthlyAmount > 0 ? "active" : "paused",
+      holdingStatus: "holding",
+      dcaStatus: monthlyAmount > 0 ? "active" : "never_started",
+      entryMode: monthlyAmount > 0 ? "dca" : "one_time",
+      entryNav: 3,
+      nav: 3,
+      valuation: "undervalued",
+      shares: 0,
+      monthlyAmount,
+      monthlyDcaAmount: monthlyAmount,
+      totalInvested: 0,
       holdingPrincipal: 0,
-      recoveryMonth: Math.min(state.month + randomInt(random, 3, 5), Math.max(state.month + 1, state.maxMonth - 1)),
-      overvaluedMonth: null,
-      recoveryTriggered: false,
-      overvaluedTriggered: false,
+      startMonth: state.month,
     };
-    addActiveEffect(state, { target: "expense", amount: effect.monthlyAmount, duration: 999 }, card.id, { sourcePlanId: "dca" });
+    if (initialAmount > 0) {
+      const purchase = core.calculateFundPurchase(initialAmount, state.dca.nav);
+      state.savings -= purchase.investedAmount;
+      state.dca.shares += purchase.purchasedShares;
+      state.dca.totalInvested += purchase.investedAmount;
+      state.dca.holdingPrincipal += purchase.investedAmount;
+    }
     return;
   }
   if (effect.type === "start_protection_plan" && !state.protection) {
@@ -335,7 +342,10 @@ function applyEffect(state, effect, card, random) {
   if (["invest_or_reserve", "bonus_invest_or_reserve"].includes(effect.type)) {
     const amount = effect.type === "bonus_invest_or_reserve" ? state.baseIncome : effect.amount;
     const investAmount = Math.round(amount * (effect.investPercent || 0.5));
-    if (state.dca && state.dca.status !== "sold_all") {
+    if (state.dca && state.dca.holdingStatus !== "sold_all") {
+      const purchase = core.calculateFundPurchase(investAmount, state.dca.nav);
+      state.dca.shares += purchase.purchasedShares;
+      state.dca.totalInvested += purchase.investedAmount;
       state.dca.holdingPrincipal += investAmount;
       state.savings += amount - investAmount;
     } else {
@@ -350,42 +360,146 @@ function removePlanExpense(state, planId) {
   state.activeEffects = state.activeEffects.filter((effect) => effect.sourcePlanId !== planId);
 }
 
-function processDcaMarket(state, strategy, random) {
-  const plan = state.dca;
-  if (!plan || plan.status === "sold_all" || plan.holdingPrincipal <= 0) return;
-  let stage = null;
-  if (!plan.recoveryTriggered && state.month >= plan.recoveryMonth) {
-    plan.recoveryTriggered = true;
-    plan.overvaluedMonth = Math.min(state.maxMonth, state.month + randomInt(random, 3, 5));
-    stage = "recovered";
-  } else if (plan.recoveryTriggered && !plan.overvaluedTriggered && state.month >= plan.overvaluedMonth) {
-    plan.overvaluedTriggered = true;
-    stage = "overvalued";
-  }
-  if (!stage) return;
+function syncSimInvestmentMarket(state) {
+  if (!state.dca) return;
+  state.dca.nav = state.market.nav;
+  state.dca.valuation = state.market.valuation;
+}
 
-  const randomChoices = stage === "recovered" ? ["sell_half", "hold", "stop"] : ["sell_half", "sell_all", "hold"];
+function startSimInvestment(state, mode) {
+  const previous = state.dca || {};
+  state.dca = {
+    ...previous,
+    status: mode === "dca" ? "active" : "paused",
+    holdingStatus: "holding",
+    dcaStatus: mode === "dca" ? "active" : "never_started",
+    entryMode: mode,
+    entryNav: state.market.nav,
+    nav: state.market.nav,
+    valuation: state.market.valuation,
+    shares: 0,
+    monthlyAmount: mode === "dca" ? 2000 : 0,
+    monthlyDcaAmount: mode === "dca" ? 2000 : 0,
+    totalInvested: previous.totalInvested || 0,
+    holdingPrincipal: 0,
+    soldPrincipal: previous.soldPrincipal || 0,
+    realizedAmount: previous.realizedAmount || 0,
+    startMonth: state.month,
+  };
+  if (["one_time", "dca"].includes(mode)) {
+    const purchase = core.calculateFundPurchase(mode === "one_time" ? 6000 : 2000, state.market.nav);
+    state.savings -= purchase.investedAmount;
+    state.dca.shares = purchase.purchasedShares;
+    state.dca.totalInvested += purchase.investedAmount;
+    state.dca.holdingPrincipal = purchase.investedAmount;
+  }
+}
+
+function processMarketQuote(state, strategy, random) {
+  const riseStreak = core.countConsecutiveMarketRises(state.market.history);
+  const latestMove = core.getLatestMarketMove(state.market.history);
+  if (riseStreak < core.INVESTMENT_TIMING.riseStreakMonths) state.market.riseStreakQuoteActive = false;
+  const riseStreakDue = core.shouldTriggerRiseStreakQuote(
+    state.market,
+    core.INVESTMENT_TIMING.riseStreakMonths,
+  );
+  if (latestMove === "down") return;
+  if (riseStreakDue) state.market.riseStreakQuoteActive = true;
+  else if (riseStreak >= core.INVESTMENT_TIMING.riseStreakMonths && state.market.riseStreakQuoteActive) return;
+  else if (random() >= core.INVESTMENT_TIMING.quoteChance) return;
+  syncSimInvestmentMarket(state);
+  let plan = state.dca;
+  const hasHolding = plan && plan.holdingStatus !== "sold_all" && plan.holdingPrincipal > 0;
+  state.investmentMarketHistory.push({
+    month: state.month,
+    nav: state.market.nav,
+    valuation: state.market.valuation,
+    trend: state.market.trend,
+    hasHolding: Boolean(hasHolding),
+  });
+
+  if (!hasHolding) {
+    const action =
+      strategy === "reserve"
+        ? "skip"
+        : strategy === "participate"
+          ? random() < 0.5 ? "buy_once" : "begin_dca"
+          : ["buy_once", "begin_dca", "skip"][Math.floor(random() * 3)];
+    if (action === "buy_once") startSimInvestment(state, "one_time");
+    if (action === "begin_dca") startSimInvestment(state, "dca");
+    return;
+  }
+
+  const lowValuation = state.market.valuation === "undervalued";
+  const highValuation = state.market.valuation === "overvalued";
+  const dcaControl = plan.dcaStatus === "active" ? "pause" : plan.dcaStatus === "paused" ? "resume" : "start";
+  const randomChoices = ["hold", "add", dcaControl, "sell_half", "sell_all"];
   const action =
     strategy === "random"
       ? randomChoices[Math.floor(random() * randomChoices.length)]
       : strategy === "reserve"
-        ? stage === "recovered" ? "sell_half" : "sell_all"
-        : stage === "recovered" ? "hold" : "sell_half";
+        ? highValuation ? "sell_all" : lowValuation && plan.dcaStatus === "active" ? "pause" : lowValuation ? "hold" : "sell_half"
+        : lowValuation ? "add" : highValuation ? "sell_half" : "hold";
   if (action === "hold") return;
-  if (action === "stop") {
+  if (action === "pause") {
+    plan.dcaStatus = "paused";
     plan.status = "paused";
     removePlanExpense(state, "dca");
     return;
   }
-  const sale = core.calculateDcaSale(plan.holdingPrincipal, action === "sell_all" ? 1 : 0.5, stage === "overvalued" ? 0.18 : 0.06);
+  if (action === "resume") {
+    plan.dcaStatus = "active";
+    plan.status = "active";
+    plan.monthlyAmount = plan.monthlyAmount || 2000;
+    return;
+  }
+  if (action === "start") {
+    plan.dcaStatus = "active";
+    plan.status = "active";
+    plan.monthlyAmount = plan.monthlyAmount || 2000;
+    plan.monthlyDcaAmount = plan.monthlyAmount;
+    return;
+  }
+  if (action === "add") {
+    const purchase = core.calculateFundPurchase(4000, plan.nav);
+    state.savings -= purchase.investedAmount;
+    plan.shares += purchase.purchasedShares;
+    plan.totalInvested += purchase.investedAmount;
+    plan.holdingPrincipal += purchase.investedAmount;
+    return;
+  }
+  const sale = core.calculateFundSale({
+    shares: plan.shares,
+    holdingPrincipal: plan.holdingPrincipal,
+    ratio: action === "sell_all" ? 1 : 0.5,
+    nav: plan.nav,
+  });
   state.savings += sale.soldAmount;
+  plan.shares = sale.remainingShares;
   plan.holdingPrincipal = sale.remainingPrincipal;
-  plan.status = sale.status;
+  plan.holdingStatus = sale.status === "sold_all" ? "sold_all" : "holding";
+  if (plan.dcaStatus === "active") plan.dcaStatus = "paused";
+  plan.status = plan.holdingStatus === "sold_all" ? "sold_all" : plan.dcaStatus === "active" ? "active" : "paused";
   removePlanExpense(state, "dca");
 }
 
 function processEndOfMonth(state, random) {
-  if (state.dca?.status === "active") state.dca.holdingPrincipal += state.dca.monthlyAmount;
+  if (state.dca?.dcaStatus === "active") {
+    const execution = core.calculateAffordableInvestmentContribution({
+      savingsBeforeContribution: state.savings,
+      requestedAmount: state.dca.monthlyAmount,
+    });
+    if (execution.shouldPause) {
+      state.dca.dcaStatus = "paused";
+      state.dca.status = "paused";
+    } else if (execution.contributionAmount > 0) {
+      const purchase = core.calculateFundPurchase(execution.contributionAmount, state.dca.nav);
+      state.savings -= purchase.investedAmount;
+      state.dca.shares += purchase.purchasedShares;
+      state.dca.totalInvested += purchase.investedAmount;
+      state.dca.holdingPrincipal += purchase.investedAmount;
+    }
+  }
   if (state.protection?.status === "active") {
     state.protection.remainingMonths -= 1;
     if (state.protection.remainingMonths <= 0) {
@@ -408,15 +522,50 @@ function processEndOfMonth(state, random) {
     if (item.type === "savings_effect") state.savings += item.amount;
     if (item.type === "random_savings_effect") {
       const outcome = core.pickWeightedOutcome(item.outcomes, random());
-      if (outcome) state.savings += core.calculateSavingsOutcomeAmount(outcome, state.baseIncome);
+      if (outcome) {
+        state.savings += core.calculateSavingsOutcomeAmount(outcome, state.baseIncome);
+        if (outcome.activeEffect) addActiveEffect(state, outcome.activeEffect, item.id);
+      }
     }
     if (item.type === "active_effect") addActiveEffect(state, { target: item.target, amount: item.amount, duration: item.duration }, item.sourceEventId || item.id);
     if (item.type === "career" && random() < 0.7) addActiveEffect(state, { target: "income", amount: 1500, duration: 12 }, item.id);
   });
 }
 
+function trySimCashRescue(state, strategy, random) {
+  if (state.savings >= 0 || !state.dca || state.dca.holdingStatus === "sold_all") return false;
+  const options = core.calculateCashRescueOptions({
+    savings: state.savings,
+    shares: state.dca.shares,
+    holdingPrincipal: state.dca.holdingPrincipal,
+    nav: state.dca.nav,
+  });
+  if (!options.eligible) return false;
+
+  const decision =
+    strategy === "reserve"
+      ? "all"
+      : strategy === "participate"
+        ? "partial"
+        : ["partial", "all", "decline"][Math.floor(random() * 3)];
+  if (decision === "decline") return false;
+
+  const sale = decision === "all" ? options.fullSale : options.partialSale;
+  state.savings += sale.soldAmount;
+  state.dca.shares = sale.remainingShares;
+  state.dca.holdingPrincipal = sale.remainingPrincipal;
+  state.dca.soldPrincipal = (state.dca.soldPrincipal || 0) + sale.soldPrincipal;
+  state.dca.realizedAmount = (state.dca.realizedAmount || 0) + sale.soldAmount;
+  state.dca.holdingStatus = sale.status === "sold_all" ? "sold_all" : "holding";
+  if (state.dca.dcaStatus === "active") state.dca.dcaStatus = "paused";
+  state.dca.status = state.dca.holdingStatus === "sold_all" ? "sold_all" : "paused";
+  state.cashRescues.push({ month: state.month, decision, soldAmount: sale.soldAmount });
+  return state.savings >= 0;
+}
+
 function simulateGame(identity, maxMonth, strategy, seed) {
   const random = createRandom(seed);
+  const market = core.createInitialMarketState(random(), random(), random(), 1);
   const state = {
     identityId: identity.id,
     baseIncome: identity.income,
@@ -429,19 +578,30 @@ function simulateGame(identity, maxMonth, strategy, seed) {
     scheduled: [],
     protection: null,
     dca: null,
+    market,
     draws: [],
     choices: [],
     tempIncome: 0,
     tempExpense: 0,
     eventStress: {},
     repeatedAdjacent: 0,
+    investmentMarketHistory: [],
+    cashRescues: [],
     careerEventMonth: randomInt(random, 2, Math.max(2, Math.min(5, maxMonth - 2))),
   };
 
   let completedMonths = 0;
   let failureSource = null;
   while (state.month <= maxMonth && state.savings >= 0) {
-    processDcaMarket(state, strategy, random);
+    if (state.market.lastUpdatedMonth < state.month) {
+      state.market = core.advanceMarketState(state.market, {
+        month: state.month,
+        regimeRandom: random(),
+        trendRandom: random(),
+        moveRandom: random(),
+      });
+    }
+    syncSimInvestmentMarket(state);
     const beforeSavings = state.savings;
     const beforeIncome = recurringIncome(state);
     const beforeExpense = recurringExpense(state);
@@ -464,6 +624,8 @@ function simulateGame(identity, maxMonth, strategy, seed) {
     state.eventStress[card.id] = (state.eventStress[card.id] || 0) + stress;
     failureSource = card.id;
     processEndOfMonth(state, random);
+    if (state.savings < 0) trySimCashRescue(state, strategy, random);
+    if (state.savings >= 0) processMarketQuote(state, strategy, random);
     completedMonths += 1;
     if (state.savings < 0) break;
     state.month += 1;
@@ -483,6 +645,9 @@ function simulateGame(identity, maxMonth, strategy, seed) {
     choices: state.choices,
     eventStress: state.eventStress,
     repeatedAdjacent: state.repeatedAdjacent,
+    investmentMarketHistory: state.investmentMarketHistory,
+    cashRescues: state.cashRescues,
+    marketHistory: state.market.history,
   };
 }
 
@@ -545,8 +710,71 @@ function buildReport(results) {
     .map(([id, total]) => ({ id, average: total / (draws.get(id) || 1), draws: draws.get(id) || 0 }))
     .sort((a, b) => b.average - a.average)
     .slice(0, 10);
+  const summaryRows = summary
+    .map((row) => `| ${row.maxMonth}个月 | ${STRATEGY_LABELS[row.strategy]} | ${row.runs} | ${percent(row.completionRate)} | ${formatNumber(row.averageMonths)} | ${formatNumber(row.averageBuffer)}个月 |`)
+    .join("\n");
+  const identityTableRows = identityRows
+    .map((row) => `| ${row.name} | ${percent(row.completionRate)} | ${formatNumber(row.averageMonths)} | ${formatNumber(row.averageBuffer)}个月 |`)
+    .join("\n");
+  const failureTableRows = failureRows
+    .map(([id, count]) => `| ${cardById.get(id)?.title || id} | ${count} |`)
+    .join("\n") || "| 暂无 | 0 |";
+  const stressTableRows = stressRows
+    .map((row) => `| ${cardById.get(row.id)?.title || row.id} | ${Math.round(row.average).toLocaleString("zh-CN")}元 | ${row.draws} |`)
+    .join("\n");
 
-  return `# 数值模拟基线\n\n生成时间：${new Date().toISOString()}\n版本：0.3.8-internal\n总模拟局数：${results.length.toLocaleString("zh-CN")}\n每个“身份 × 挑战长度 × 选择倾向”组合：${RUNS_PER_COMBINATION} 局\n\n> 这份报告用于发现异常，不是玩家结果预测。模拟不会改变正式游戏的随机抽卡，也不会自动调整卡池。复杂后续事件按当前规则做了等价计算，最终仍需结合真人试玩判断。\n\n## 总体结果\n\n| 挑战长度 | 选择倾向 | 局数 | 完成率 | 平均完成月份 | 平均最终安全垫 |\n| --- | --- | ---: | ---: | ---: | ---: |\n${summary.map((row) => `| ${row.maxMonth}个月 | ${STRATEGY_LABELS[row.strategy]} | ${row.runs} | ${percent(row.completionRate)} | ${formatNumber(row.averageMonths)} | ${formatNumber(row.averageBuffer)}个月 |`).join("\n")}\n\n## 36个月随机选择：身份差异\n\n| 身份 | 完成率 | 平均完成月份 | 平均最终安全垫 |\n| --- | ---: | ---: | ---: |\n${identityRows.map((row) => `| ${row.name} | ${percent(row.completionRate)} | ${formatNumber(row.averageMonths)} | ${formatNumber(row.averageBuffer)}个月 |`).join("\n")}\n\n## 现金储备被击穿时的最后事件\n\n| 事件 | 次数 |\n| --- | ---: |\n${failureRows.map(([id, count]) => `| ${cardById.get(id)?.title || id} | ${count} |`).join("\n") || "| 暂无 | 0 |"}\n\n“最后事件”不等于唯一原因，它只表示现金储备跌破0时所在的回合。\n\n## 单次抽到的平均负向影响\n\n| 事件 | 平均影响 | 抽到次数 |\n| --- | ---: | ---: |\n${stressRows.map((row) => `| ${cardById.get(row.id)?.title || row.id} | ${Math.round(row.average).toLocaleString("zh-CN")}元 | ${row.draws} |`).join("\n")}\n\n这里比较的是相对于该回合原有现金流的额外影响，不按最坏情况估算。\n\n## 随机性规则\n\n- 同一局内不会重复抽到同一张主事件卡。\n- 由玩家选择产生的后续回应不属于重复抽卡，仍会按计划触发。\n\n## 使用方式\n\n- 重新生成：\`npm run simulate\`\n- 修改身份或卡牌后应重新生成，并比较完成率、失败月份和高冲击事件是否发生异常跳变。\n- 是否调数值，必须同时参考真人测试反馈。\n`;
+  return `# 数值模拟基线
+
+生成时间：${new Date().toISOString()}
+版本：0.4.10-internal
+总模拟局数：${results.length.toLocaleString("zh-CN")}
+每个“身份 × 挑战长度 × 选择倾向”组合：${RUNS_PER_COMBINATION} 局
+
+> 这份报告用于发现异常，不是玩家结果预测。模拟不会改变正式游戏的随机抽卡，也不会自动调整卡池。复杂后续事件按当前规则做了等价计算，最终仍需结合真人试玩判断。
+
+## 总体结果
+
+| 挑战长度 | 选择倾向 | 局数 | 完成率 | 平均完成月份 | 平均最终安全垫 |
+| --- | --- | ---: | ---: | ---: | ---: |
+${summaryRows}
+
+## 36个月随机选择：身份差异
+
+| 身份 | 完成率 | 平均完成月份 | 平均最终安全垫 |
+| --- | ---: | ---: | ---: |
+${identityTableRows}
+
+## 现金储备被击穿时的最后事件
+
+| 事件 | 次数 |
+| --- | ---: |
+${failureTableRows}
+
+“最后事件”不等于唯一原因，它只表示现金储备跌破0时所在的回合。
+
+## 单次抽到的平均负向影响
+
+| 事件 | 平均影响 | 抽到次数 |
+| --- | ---: | ---: |
+${stressTableRows}
+
+这里比较的是相对于该回合原有现金流的额外影响，不按最坏情况估算。
+
+## 随机性规则
+
+- 同一局内不会重复抽到同一张主事件卡。
+- 市场从开局起按月独立运行，首次估值可能是低估、正常或高估。
+- 市场先生报价通常按20%概率独立出现；净值连续上涨3个月时强制出现一次，触发后同一上涨链不重复，下跌月份不自动出现。
+- 净值每月可能上涨、下跌或震荡；是否持仓不会改变市场运行。
+- 现金储备被击穿时，模拟会按策略决定是否使用足以覆盖缺口的基金持仓应急卖出。
+- 由玩家选择产生的后续回应不属于重复抽卡，仍会按计划触发。
+
+## 使用方式
+
+- 重新生成：\`npm run simulate\`
+- 修改身份或卡牌后应重新生成，并比较完成率、失败月份和高冲击事件是否发生异常跳变。
+- 是否调数值，必须同时参考真人测试反馈。
+`;
 }
 
 function main() {

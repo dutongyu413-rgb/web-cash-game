@@ -306,7 +306,7 @@ var eventCards = [
     id: "temporary_unemployment",
     title: "短期失业",
     category: "income_down",
-    description: "你暂时失去工作收入，收入归零，持续 2 个月。",
+    description: "从本月起暂时没有工作收入，收入归零，持续 2 个月。",
     effect: { type: "add_active_effect", target: "income_percent", amount: -1, duration: 2 },
     insight: "短期收入中断。",
   },
@@ -903,32 +903,6 @@ var eventCards = [
     insight: "瑜伽课程选择已经记录。",
   },
   {
-    id: "index_dca_choice",
-    title: "低估区域的定投机会",
-    category: "choice",
-    description: "你关注的某个宽基指数进入相对低估区域。",
-    choices: [
-      {
-        label: "开始定投",
-        resultText: "你开启了每月 2000 元的长期定投计划。",
-        effect: { type: "start_dca_plan", monthlyAmount: 2000 },
-      },
-      {
-        label: "暂不定投",
-        resultText: "你选择先观察，不改变本月和未来现金流。",
-        effect: { type: "none" },
-      },
-      {
-        label: "先建立现金储备",
-        resultText: "你决定先压缩可消费支出 2000 元，持续 6 个月，把安全垫垫厚一点。",
-        wellbeingCost: 4,
-        wellbeingReason: "连续六个月压缩可选消费",
-        effect: { type: "add_active_effect", target: "expense", amount: -2000, duration: 6 },
-      },
-    ],
-    insight: "本月选择已经记录，后续可能出现新的市场状态。",
-  },
-  {
     id: "career_course",
     title: "职业提升课程",
     category: "choice",
@@ -1106,19 +1080,164 @@ var eventCards = [
     insight: "后厨设备已经处理。",
   },
   {
+    id: "career_cafe_footfall",
+    title: "商圈客流变少",
+    category: "choice",
+    eventLabel: "职业事件",
+    eventMark: "CAREER",
+    careerIdentityIds: ["cafe_owner"],
+    description: "附近道路施工，工作日到店客流明显减少，预计会持续四个月。",
+    choices: [
+      {
+        label: "保持全天营业",
+        resultText: "继续保持原来的营业时间，常规月收入减少约 12%，持续 4 个月。",
+        effect: { type: "add_active_effect", target: "income_percent", amount: -0.12, duration: 4 },
+      },
+      {
+        label: "缩短下午营业",
+        resultText: "缩短客流较少时段的营业时间，常规月收入减少约 18%，月支出减少约 6%，持续 4 个月。",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "add_active_effect", target: "income_percent", amount: -0.18, duration: 4 },
+            { type: "add_active_effect", target: "expense_percent", amount: -0.06, duration: 4 },
+          ],
+        },
+      },
+    ],
+    insight: "这段时间的营业安排已经确定。",
+  },
+  {
+    id: "cafe_blogger_promotion",
+    title: "邀请探店博主",
+    category: "choice",
+    description: "一位本地探店博主愿意来店里拍摄一期内容。",
+    choices: [
+      {
+        label: "付费邀请到店",
+        resultText: "支付 3,000 元合作费用，下个月开始常规月收入增加约 15%，持续 3 个月。",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "change_savings", amount: -3000 },
+            {
+              type: "schedule_active_effect",
+              id: "cafe_blogger_income",
+              triggerDelay: 1,
+              preserveDelay: true,
+              target: "income_percent",
+              amount: 0.15,
+              duration: 3,
+              title: "探店内容带来新客",
+              message: "探店内容发布后，店里的到店客流增加了。",
+            },
+          ],
+        },
+      },
+      {
+        label: "自己拍短视频",
+        resultText: "本月增加 500 元拍摄支出，下个月开始常规月收入增加约 6%，持续 3 个月。",
+        wellbeingCost: 2,
+        wellbeingReason: "自己拍摄和运营账号占用了休息时间",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "one_month_expense_change", amount: 500 },
+            {
+              type: "schedule_active_effect",
+              id: "cafe_self_promotion_income",
+              triggerDelay: 1,
+              preserveDelay: true,
+              target: "income_percent",
+              amount: 0.06,
+              duration: 3,
+              title: "短视频带来一些新客",
+              message: "你自己拍摄的短视频陆续带来了一些新客。",
+            },
+          ],
+        },
+      },
+      {
+        label: "暂时不宣传",
+        resultText: "这次不安排额外宣传，本月现金流不变。",
+        effect: { type: "none" },
+      },
+    ],
+    insight: "这次宣传安排已经确定。",
+  },
+  {
+    id: "cafe_stray_cat",
+    title: "门口来了一只流浪猫",
+    category: "choice",
+    description: "一只流浪猫最近总在店门口休息，看起来已经慢慢熟悉了这里。",
+    choices: [
+      {
+        label: "检查后留在店里",
+        resultText: "支付 1,200 元完成检查、驱虫和基础用品，猫留在了店里。",
+        effect: {
+          type: "compound",
+          effects: [
+            { type: "change_savings", amount: -1200 },
+            {
+              type: "schedule_random_savings_effect",
+              id: "cafe_cat_follow_up",
+              triggerDelay: 3,
+              preserveDelay: true,
+              title: "店里的猫有了新变化",
+              outcomes: [
+                {
+                  id: "cafe_cat_mascot",
+                  weight: 0.5,
+                  amount: 0,
+                  title: "小店成了附近的猫咖",
+                  message: "常来店里的客人开始专程来看猫，小店的热度明显上升。",
+                  activeEffect: {
+                    name: "猫咖热度",
+                    target: "income_percent",
+                    amount: 0.2,
+                    duration: 4,
+                  },
+                },
+                {
+                  id: "cafe_cat_kittens",
+                  weight: 0.5,
+                  amount: 0,
+                  title: "店里多了几只小猫",
+                  message: "猫生下了几只小猫，接下来需要增加猫粮、猫砂和护理用品。",
+                  activeEffect: {
+                    name: "幼猫照料",
+                    target: "expense",
+                    amount: 1200,
+                    duration: 6,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        label: "联系附近救助站",
+        resultText: "支付 300 元检查和交通费用，把猫送到了附近的救助站。",
+        effect: { type: "change_savings", amount: -300 },
+      },
+    ],
+    insight: "这只猫已经得到安置。",
+  },
+  {
     id: "career_teacher_public_course",
-    title: "公共课程项目",
+    title: "成人钢琴小班",
     category: "choice",
     eventLabel: "职业事件",
     eventMark: "CAREER",
     careerIdentityIds: ["stable_employee"],
-    description: "学校准备一门面向校外的公共课程，邀请你参与课程设计和授课。",
+    description: "琴行准备开设周末成人钢琴小班，邀请你负责课程设计和授课。",
     choices: [
       {
-        label: "接下课程项目",
-        resultText: "本月收入增加约 16%，资料支出增加 600 元，也占用了两个周末。",
+        label: "接下周末小班",
+        resultText: "本月收入增加约 16%，曲谱和课程资料支出增加 600 元，也占用了两个周末。",
         wellbeingCost: 2,
-        wellbeingReason: "课程准备占用了两个周末",
+          wellbeingReason: "小班课程准备占用了两个周末",
         effect: {
           type: "compound",
           effects: [
@@ -1128,12 +1247,12 @@ var eventCards = [
         },
       },
       {
-        label: "暂不参加",
+        label: "保持一对一教学",
         resultText: "你维持原来的教学安排，本月现金流不变。",
         effect: { type: "none" },
       },
     ],
-    insight: "公共课程项目已经安排。",
+    insight: "周末课程已经安排。",
   },
   {
     id: "career_sales_major_client",
@@ -1353,7 +1472,7 @@ var eventCards = [
       },
       {
         label: "先继续使用",
-        resultText: "暂时继续使用已经明显磨损的装备，三个月后可能发生训练意外。",
+        resultText: "暂时继续使用这套已经明显磨损的装备。",
         wellbeingCost: 2,
         wellbeingReason: "继续使用磨损装备增加了训练负担",
         effect: {
@@ -1375,6 +1494,7 @@ var eventCards = [
               id: "equipment_held_up",
               weight: 0.55,
               amount: 0,
+              silent: true,
               title: "旧装备暂时撑住了",
               message: "这段时间没有发生意外，现金流没有变化。",
             },

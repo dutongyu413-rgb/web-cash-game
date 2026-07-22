@@ -13,6 +13,14 @@ var careerEventRules = {
     "shopping_card",
     "athlete_commercial_appearance",
     "athlete_brand_endorsement",
+    "cafe_blogger_promotion",
+    "cafe_stray_cat",
+  ],
+  strictIdentityEventIds: [
+    "athlete_commercial_appearance",
+    "athlete_brand_endorsement",
+    "cafe_blogger_promotion",
+    "cafe_stray_cat",
   ],
   eligibleIdentityIdsByEvent: {
     salary_cut: [
@@ -84,11 +92,20 @@ var careerEventRules = {
     ],
     athlete_commercial_appearance: ["athlete"],
     athlete_brand_endorsement: ["athlete"],
+    cafe_blogger_promotion: ["cafe_owner"],
+    cafe_stray_cat: ["cafe_owner"],
   },
   weightMultipliersByIdentity: {
     young_worker: { salary_cut: 1.35, year_end_bonus: 1.2, career_course: 1.2, commute_cost_up: 1.2 },
     freelancer: { client_budget_cut: 1.35, project_delay: 1.35, side_income: 1.2, freelance_referral: 1.2, laptop_repair: 1.2 },
     small_shop_owner: { car_repair: 1.2, temporary_unemployment: 0.75, career_course: 0.75 },
+    cafe_owner: {
+      cafe_blogger_promotion: 1.35,
+      cafe_stray_cat: 1.35,
+      property_fee_up: 1.2,
+      home_appliance: 1.2,
+      temporary_unemployment: 0.75,
+    },
     stable_employee: { career_course: 1.2, shopping_card: 1.2, salary_cut: 0.75, year_end_bonus: 0.75 },
     single_parent: { commission_slowdown: 1.35, client_budget_cut: 1.2, commute_cost_up: 1.2, year_end_bonus: 1.2 },
     senior_engineer: { career_course: 1.2, laptop_repair: 1.2, salary_cut: 1.2, year_end_bonus: 1.2 },
@@ -111,7 +128,8 @@ var careerEventRules = {
 
 careerEventRules.isEligible = function isEligible(eventId, identityId) {
   const eligibleIds = careerEventRules.eligibleIdentityIdsByEvent[eventId];
-  if (!eligibleIds || identityId === "custom") return true;
+  if (!eligibleIds) return true;
+  if (identityId === "custom") return !careerEventRules.strictIdentityEventIds.includes(eventId);
   return eligibleIds.includes(identityId);
 };
 
