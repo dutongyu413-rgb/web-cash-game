@@ -626,6 +626,23 @@
     return summary.sort((first, second) => first.month - second.month || first.sequence - second.sequence);
   }
 
+  function getInvestmentReturnBand(returnRate) {
+    const normalizedRate = Number(returnRate);
+    if (!Number.isFinite(normalizedRate)) return "unknown";
+    if (normalizedRate < -0.05) return "loss_over_5pct";
+    if (normalizedRate < 0) return "slight_loss";
+    if (normalizedRate <= 0.05) return "flat";
+    if (normalizedRate <= 0.2) return "gain_under_20pct";
+    return "gain_over_20pct";
+  }
+
+  function getViewDurationBand(seconds) {
+    const normalizedSeconds = Math.max(0, Number(seconds) || 0);
+    if (normalizedSeconds < 5) return "under_5_seconds";
+    if (normalizedSeconds < 15) return "5_to_15_seconds";
+    return "over_15_seconds";
+  }
+
   function getDueScheduledCards(cards, currentMonth) {
     return (Array.isArray(cards) ? cards : []).filter(
       (card) => !card.triggered && Number(card.triggerMonth) <= Number(currentMonth),
@@ -682,6 +699,8 @@
     calculateCashRescueOptions,
     getInvestmentPriceSeries,
     summarizeInvestmentActions,
+    getInvestmentReturnBand,
+    getViewDurationBand,
     normalizeInvestmentState,
     getMarketValuation,
     createInitialMarketState,

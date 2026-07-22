@@ -400,6 +400,21 @@ test("投资操作会合并逐月定投和重复持有记录", () => {
   assert.equal(actions[3].amount - actions[3].principal, 1200);
 });
 
+test("投资结果埋点只输出收益区间而不是具体收益率", () => {
+  assert.equal(core.getInvestmentReturnBand(Number.NaN), "unknown");
+  assert.equal(core.getInvestmentReturnBand(-0.12), "loss_over_5pct");
+  assert.equal(core.getInvestmentReturnBand(-0.01), "slight_loss");
+  assert.equal(core.getInvestmentReturnBand(0.03), "flat");
+  assert.equal(core.getInvestmentReturnBand(0.12), "gain_under_20pct");
+  assert.equal(core.getInvestmentReturnBand(0.32), "gain_over_20pct");
+});
+
+test("弹窗停留时间按低基数区间记录", () => {
+  assert.equal(core.getViewDurationBand(2), "under_5_seconds");
+  assert.equal(core.getViewDurationBand(8), "5_to_15_seconds");
+  assert.equal(core.getViewDurationBand(22), "over_15_seconds");
+});
+
 test("同月到期的后续事件会全部进入队列且已触发项不会重复", () => {
   const cards = [
     { id: "a", triggerMonth: 4, triggered: false },

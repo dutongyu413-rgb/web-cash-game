@@ -4,7 +4,7 @@ const toast = document.getElementById("toast");
 const TRACKING_PROJECT = "cash_game";
 const TRACKING_SCRIPT_SRC = "https://cloud.umami.is/script.js";
 const ONBOARDING_STORAGE_KEY = "cashflowLifeMapOnboardingV2";
-const APP_VERSION = "0.4.12-internal";
+const APP_VERSION = "0.4.13-internal";
 const GAME_STATE_VERSION = window.CashGameCore?.GAME_STATE_VERSION || 3;
 const debugParams = new URLSearchParams(window.location.search);
 const debugMode = debugParams.get("debug") === "1" || debugParams.has("seed");
@@ -17,6 +17,7 @@ let pendingMonthlySummary = null;
 let selectedMaxMonth = DEFAULT_CHALLENGE_LENGTH;
 let mapMotion = null;
 let pendingTrackingEvents = [];
+let activeMarketQuoteTracking = null;
 let debugRandomState = window.CashGameCore.normalizeSeed(debugParams.get("seed") || "cash-game-debug");
 let debugSeedText = debugParams.get("seed") || "cash-game-debug";
 const debugEventParam = debugParams.get("event") || null;
@@ -96,6 +97,7 @@ function trackEvent(name, data = {}) {
   // Umami 自定义事件：统一加项目标识，便于和其他 GitHub Pages 项目区分。
   const payload = {
     project: TRACKING_PROJECT,
+    app_version: APP_VERSION,
     ...data,
   };
 
@@ -116,6 +118,19 @@ function bufferBand(buffer) {
   if (buffer < 3) return "1_to_3_months";
   if (buffer < 6) return "3_to_6_months";
   return "over_6_months";
+}
+
+function trackingDurationBand(startedAt) {
+  const elapsedSeconds = Math.max(0, Math.round((Date.now() - Number(startedAt || Date.now())) / 1000));
+  return window.CashGameCore.getViewDurationBand(elapsedSeconds);
+}
+
+function investmentResultStatus(result) {
+  if (!result) return "not_started";
+  if (result.holdingPrincipal > 0 && result.realizedAmount > 0) return "partially_sold";
+  if (result.holdingPrincipal > 0) return "holding";
+  if (result.realizedAmount > 0) return "sold_all";
+  return "started_without_investment";
 }
 
 function renderHome() {
@@ -980,13 +995,15 @@ function endMonth(options = {}) {
   if (endReason === "cash_broken" && cashRescue?.hasHolding && !cashRescue.eligible) {
     recordUnavailableCashRescue(cashRescue);
   }
+  const marketQuoteSource = getMarketQuoteTrigger(endReason);
   player.pendingTransition = {
     endReason,
     nextMonth: player.currentMonth + 1,
     recoveryMessages,
     quickFeedback,
     cashRescue: cashRescue?.eligible ? cashRescue : null,
-    marketQuoteDue: shouldQueueMarketQuote(endReason),
+    marketQuoteDue: Boolean(marketQuoteSource),
+    marketQuoteSource,
     marketQuoteHandled: false,
   };
   saveGame();
@@ -1076,6 +1093,10 @@ function renderResultPage() {
   const dcaResult = getDcaResult();
   const careerResult = getCareerCourseResult();
   const wellbeingPenalty = getWellbeingPenalty();
+  const investmentStatus = investmentResultStatus(dcaResult);
+  const investmentReturnBand = dcaResult
+    ? window.CashGameCore.getInvestmentReturnBand(dcaResult.returnRate)
+    : "not_started";
   const rankLabel = player.endReason === "manual" ? "记录" : "等级";
   const resultTrackingEvent =
     player.endReason === "cash_broken"
@@ -1094,6 +1115,15 @@ function renderResultPage() {
     lowest_buffer_band: bufferBand(player.lowestBuffer),
     had_protection: Boolean(getAnyProtectionPlan()),
     had_dca: Boolean(getDcaPlan()),
+    investment_status: investmentStatus,
+    investment_return_band: investmentReturnBand,
+  });
+  trackEvent("cash_game_investment_result", {
+    end_reason: player.endReason || "completed",
+    challenge_length: player.maxMonth,
+    investment_status: investmentStatus,
+    investment_return_band: investmentReturnBand,
+    dca_status: getDcaPlan() ? getInvestmentDcaStatus(getDcaPlan()) : "not_started",
   });
   clearSavedGame();
   savedGameAvailable = false;
@@ -1774,7 +1804,7 @@ function resultCareerCourseHtml(result) {
   `;
 }
 
-function renderMarketQuote() {
+function renderMarketQuote(quoteSource = "manual_map") {
   const market = ensureMarketState();
   syncInvestmentWithMarket();
   const plan = getDcaPlan();
@@ -1825,6 +1855,23 @@ function renderMarketQuote() {
     }),
     "investment-quote-backdrop",
   );
+  activeMarketQuoteTracking = {
+    source: quoteSource,
+    startedAt: Date.now(),
+    hadHolding: Boolean(hasHolding),
+    dcaStatus,
+    alreadyTraded,
+    marketTrend: market.trend,
+  };
+  trackEvent("cash_game_market_quote_viewed", {
+    quote_source: quoteSource,
+    month: player.currentMonth,
+    challenge_length: player.maxMonth,
+    market_trend: market.trend,
+    holding_status: hasHolding ? "holding" : "no_holding",
+    dca_status: dcaStatus,
+    already_traded: alreadyTraded,
+  });
 }
 
 function marketQuoteHtml({ subtitle, currentNav, trendLabel, accountStatus, accountMetrics, choicesHtml, notice = "" }) {
@@ -1960,6 +2007,11 @@ function handleMarketQuoteChoice(choice) {
     market_stage: state.stage,
     choice_type: choice,
     month: player.currentMonth,
+    challenge_length: player.maxMonth,
+    quote_source: activeMarketQuoteTracking?.source || "unknown",
+    holding_status_before: activeMarketQuoteTracking?.hadHolding ? "holding" : "no_holding",
+    dca_status_before: activeMarketQuoteTracking?.dcaStatus || "unknown",
+    view_duration_band: trackingDurationBand(activeMarketQuoteTracking?.startedAt),
   });
   if ((choice === "sell_half" || choice === "sell_all") && plan) {
     trackEvent("cash_game_investment_sold", {
@@ -1972,6 +2024,7 @@ function handleMarketQuoteChoice(choice) {
   }
   syncLatestSnapshotAfterMarketAction();
   saveGame();
+  activeMarketQuoteTracking = null;
   closeModal();
   continueAfterMarketQuote("投资状态已更新。");
 }
@@ -1980,6 +2033,17 @@ function closeMarketQuote() {
   const market = ensureMarketState();
   market.lastQuoteMonth = player.currentMonth;
   market.previousQuoteNav = market.nav;
+  trackEvent("cash_game_market_quote_closed", {
+    quote_source: activeMarketQuoteTracking?.source || "unknown",
+    month: player.currentMonth,
+    challenge_length: player.maxMonth,
+    market_trend: activeMarketQuoteTracking?.marketTrend || market.trend,
+    holding_status: activeMarketQuoteTracking?.hadHolding ? "holding" : "no_holding",
+    dca_status: activeMarketQuoteTracking?.dcaStatus || "unknown",
+    already_traded: Boolean(activeMarketQuoteTracking?.alreadyTraded),
+    view_duration_band: trackingDurationBand(activeMarketQuoteTracking?.startedAt),
+  });
+  activeMarketQuoteTracking = null;
   saveGame();
   closeModal();
   continueAfterMarketQuote();
@@ -2752,6 +2816,12 @@ function recordUnavailableCashRescue(rescue) {
     savingsAfter: player.savings,
   };
   player.cashRescueHistory.push(entry);
+  trackEvent("cash_game_cash_rescue_unavailable", {
+    month: player.currentMonth,
+    challenge_length: player.maxMonth,
+    holding_status: rescue.hasHolding ? "holding" : "no_holding",
+    result: "insufficient_holding",
+  });
   player.history.push({
     month: player.currentMonth,
     entryType: "cash_rescue_unavailable",
@@ -2815,6 +2885,16 @@ function renderCashRescue() {
     `,
     "cash-rescue-backdrop",
   );
+  if (!transition.cashRescue.trackingViewed) {
+    transition.cashRescue.trackingViewed = true;
+    trackEvent("cash_game_cash_rescue_viewed", {
+      month: player.currentMonth,
+      challenge_length: player.maxMonth,
+      partial_sale_available: !partialIsFull,
+      investment_return_band: window.CashGameCore.getInvestmentReturnBand(getDcaCurrentReturnRate(plan)),
+    });
+    saveGame();
+  }
 }
 
 function handleCashRescueChoice(choice) {
@@ -2842,6 +2922,13 @@ function handleCashRescueChoice(choice) {
       effectLine: "现金缺口没有填补，本局结束。",
       savingsAfter: player.savings,
       bufferAfter: calculateBuffer(),
+    });
+    trackEvent("cash_game_cash_rescue_resolved", {
+      month: player.currentMonth,
+      challenge_length: player.maxMonth,
+      sale_type: "declined",
+      result: "cash_broken",
+      investment_return_band: window.CashGameCore.getInvestmentReturnBand(getDcaCurrentReturnRate(getDcaPlan())),
     });
     saveGame();
     closeModal();
@@ -2889,8 +2976,12 @@ function handleCashRescueChoice(choice) {
   });
   trackEvent("cash_game_cash_rescue_resolved", {
     month: player.currentMonth,
+    challenge_length: player.maxMonth,
     sale_type: rescue.outcome,
     result: player.savings >= 0 ? "continued" : "cash_broken",
+    investment_return_band: window.CashGameCore.getInvestmentReturnBand(
+      lastSale?.principal > 0 ? (soldAmount - lastSale.principal) / lastSale.principal : 0,
+    ),
   });
   saveGame();
   closeModal();
@@ -2971,7 +3062,7 @@ function showPendingMarketQuoteOrFinish() {
     return;
   }
   if (transition.marketQuoteDue && !transition.marketQuoteHandled) {
-    window.setTimeout(renderMarketQuote, 120);
+    window.setTimeout(() => renderMarketQuote(transition.marketQuoteSource || "automatic_random"), 120);
     return;
   }
   finishMonthTransition();
@@ -3093,12 +3184,28 @@ function showTurnFeedback(feedback, options = {}) {
   `;
   backdrop.appendChild(element);
   document.body.appendChild(backdrop);
+  trackEvent("cash_game_quick_result_viewed", {
+    month: feedback.month,
+    challenge_length: player.maxMonth,
+    feedback_tone: tone.replace("is-", ""),
+    is_checkpoint: Boolean(feedback.isCheckpoint),
+    has_choice: Boolean(feedback.choiceLabel),
+    crossed_buffer_threshold: feedback.crossedThreshold !== null,
+    has_protection_effect: Boolean(feedback.protectionReduction),
+    has_wellbeing_impact: Boolean(feedback.wellbeingCost),
+  });
 
   let dismissed = false;
   let readyToDismiss = prefersReducedMotion();
   const dismiss = () => {
     if (dismissed || !readyToDismiss) return;
     dismissed = true;
+    trackEvent("cash_game_quick_result_closed", {
+      month: feedback.month,
+      challenge_length: player.maxMonth,
+      feedback_tone: tone.replace("is-", ""),
+      is_checkpoint: Boolean(feedback.isCheckpoint),
+    });
     backdrop.classList.remove("show");
     window.setTimeout(() => {
       backdrop.remove();
@@ -3906,9 +4013,9 @@ function marketMisterButtonHtml() {
   `;
 }
 
-function shouldQueueMarketQuote(endReason) {
+function getMarketQuoteTrigger(endReason) {
   const market = ensureMarketState();
-  if (!market || endReason === "cash_broken") return false;
+  if (!market || endReason === "cash_broken") return null;
 
   const riseStreak = window.CashGameCore.countConsecutiveMarketRises(market.history);
   const latestMove = window.CashGameCore.getLatestMarketMove(market.history);
@@ -3920,20 +4027,20 @@ function shouldQueueMarketQuote(endReason) {
 
   if (market.lastViewedMonth === player.currentMonth || market.lastQuoteMonth === player.currentMonth) {
     if (riseStreakDue) market.riseStreakQuoteActive = true;
-    return false;
+    return null;
   }
   if (debugForcedMarketQuote) {
     debugForcedMarketQuote = false;
     if (riseStreakDue) market.riseStreakQuoteActive = true;
-    return true;
+    return "debug";
   }
-  if (latestMove === "down") return false;
+  if (latestMove === "down") return null;
   if (riseStreakDue) {
     market.riseStreakQuoteActive = true;
-    return true;
+    return "automatic_rise_streak";
   }
-  if (riseStreak >= investmentTiming.riseStreakMonths && market.riseStreakQuoteActive) return false;
-  return randomFloat() < investmentTiming.quoteChance;
+  if (riseStreak >= investmentTiming.riseStreakMonths && market.riseStreakQuoteActive) return null;
+  return randomFloat() < investmentTiming.quoteChance ? "automatic_random" : null;
 }
 
 function syncLatestSnapshotAfterMarketAction() {
@@ -4900,7 +5007,7 @@ document.addEventListener("click", (event) => {
 
   if (action === "continue-echo") continueScheduledEcho();
 
-  if (action === "market-quote") renderMarketQuote();
+  if (action === "market-quote") renderMarketQuote("manual_map");
 
   if (action === "market-quote-choice") handleMarketQuoteChoice(target.dataset.choice);
 

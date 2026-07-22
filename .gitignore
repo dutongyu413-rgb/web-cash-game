@@ -26,6 +26,16 @@ NEXT_OPTIMIZATION_ROADMAP.md
 WHEEL_EVENT_SYSTEM_PLAN.md
 BALANCE_BASELINE.md
 GITHUB_PUBLISH_CHECKLIST.md
+*.internal.md
+internal/
+docs-private/
+private-notes/
+
+# Local survey drafts and exports.
+survey-*
+questionnaire-*
+问卷草稿*
+问卷导出*
 
 # Local QA output and debug exports.
 test-results/
